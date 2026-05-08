@@ -428,7 +428,7 @@ const RecordDetails = () => {
                 </div>
                 <h1 className="record-details__title">
                   {record.recordType === 'Lab Report'
-                    ? (record.labTests?.[0]?.testName ? `${record.labTests[0].testName} & more` : 'Lab Report')
+                    ? (record.diagnosis || (record.labTests?.[0]?.testName ? `${record.labTests[0].testName} & more` : 'Lab Report'))
                     : record.recordType === 'Scan'
                     ? (record.scanType || 'Scan Report')
                     : record.recordType === 'Medical Bill'

@@ -39,9 +39,9 @@ const RecordCard = ({ record, onClick }) => {
   const getTitle = () => {
     switch (record.recordType) {
       case 'Lab Report':
-        return record.labTests?.length > 0
+        return record.diagnosis || (record.labTests?.length > 0
           ? `${record.labTests[0].testName}${record.labTests.length > 1 ? ` +${record.labTests.length - 1} more` : ''}`
-          : record.impression || 'Lab Report';
+          : record.impression || 'Lab Report');
       case 'Scan':
         return record.scanType || record.findings?.substring(0, 60) || 'Scan Report';
       case 'Discharge Summary':

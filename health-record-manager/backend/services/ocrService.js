@@ -234,6 +234,84 @@ const parsePrescription = (text) => {
 };
 
 // ── Lab Report parser ─────────────────────────────────────────────────────────
+
+/**
+ * Infer a human-readable lab report panel name from test names and raw text.
+ * Uses keyword matching to identify well-known panels, then falls back to
+ * grouping the top test names into a short title.
+ */
+const inferLabReportName = (text, labTests) => {
+  const t = text.toLowerCase();
+  const testNames = (labTests || []).map((lt) => (lt.testName || '').toLowerCase());
+  const allText = t + ' ' + testNames.join(' ');
+
+  // Ordered by specificity — first match wins
+  const panels = [
+    // Haematology
+    { name: 'Complete Blood Count (CBC)',        signals: [/\bcbc\b/, /\bcomplete\s+blood\s+count\b/, /haemoglobin|hemoglobin/, /\bwbc\b|\bwcc\b/, /\brbc\b/, /platelet/] },
+    { name: 'Differential Blood Count',          signals: [/differential|diff\s+count/, /neutrophil/, /lymphocyte/, /monocyte/, /eosinophil/] },
+    // Biochemistry
+    { name: 'Liver Function Test (LFT)',          signals: [/\blft\b/, /liver\s+function/, /bilirubin/, /sgot|ast\b/, /sgpt|alt\b/, /alkaline\s+phosphatase|alp\b/, /albumin/] },
+    { name: 'Kidney Function Test (KFT)',         signals: [/\bkft\b/, /\brft\b/, /kidney\s+function|renal\s+function/, /creatinine/, /\burea\b/, /\bbun\b/, /uric\s+acid/] },
+    { name: 'Lipid Profile',                      signals: [/lipid\s+profile/, /cholesterol/, /triglyceride/, /\bhdl\b/, /\bldl\b/, /\bvldl\b/] },
+    { name: 'Thyroid Function Test (TFT)',        signals: [/\btft\b/, /thyroid\s+function/, /\btsh\b/, /\bt3\b/, /\bt4\b/, /free\s+t3|free\s+t4|ft3|ft4/] },
+    { name: 'Blood Glucose Test',                 signals: [/fasting\s+blood\s+sugar|fbs/, /post\s+prandial|ppbs/, /random\s+blood\s+sugar|rbs/, /hba1c|glycated\s+haemoglobin/, /glucose\s+tolerance|ogtt/] },
+    { name: 'HbA1c (Glycated Haemoglobin)',       signals: [/hba1c/, /glycated\s+haemoglobin/, /glycosylated/] },
+    { name: 'Urine Routine & Microscopy',         signals: [/urine\s+routine|urinalysis|urine\s+analysis/, /urine\s+microscopy/, /pus\s+cells/, /epithelial\s+cells/] },
+    { name: 'Electrolytes Panel',                 signals: [/electrolyte/, /\bsodium\b/, /\bpotassium\b/, /\bchloride\b/, /\bbicarbonate\b/] },
+    { name: 'Iron Studies',                       signals: [/iron\s+stud/, /serum\s+iron/, /\btibc\b/, /ferritin/, /transferrin/] },
+    { name: 'Vitamin D Test',                     signals: [/vitamin\s+d/, /25[\s\-]?oh[\s\-]?d/, /cholecalciferol/] },
+    { name: 'Vitamin B12 Test',                   signals: [/vitamin\s+b[\s\-]?12/, /cobalamin/, /cyanocobalamin/] },
+    { name: 'C-Reactive Protein (CRP)',           signals: [/\bcrp\b/, /c[\s\-]?reactive\s+protein/] },
+    { name: 'ESR Test',                           signals: [/\besr\b/, /erythrocyte\s+sedimentation/] },
+    { name: 'Dengue Test',                        signals: [/dengue/, /ns1\s+antigen/, /dengue\s+igg|dengue\s+igm/] },
+    { name: 'Malaria Test',                       signals: [/malaria/, /plasmodium/, /malarial\s+parasite/] },
+    { name: 'COVID-19 Test',                      signals: [/covid[\s\-]?19/, /sars[\s\-]?cov/, /coronavirus/, /rt[\s\-]?pcr/] },
+    { name: 'Typhoid Test (Widal)',               signals: [/widal/, /typhoid/, /salmonella/] },
+    { name: 'Hepatitis B Test',                   signals: [/hepatitis\s+b/, /hbsag/, /hbeag/, /anti[\s\-]?hbs/] },
+    { name: 'Hepatitis C Test',                   signals: [/hepatitis\s+c/, /\bhcv\b/, /anti[\s\-]?hcv/] },
+    { name: 'HIV Test',                           signals: [/\bhiv\b/, /human\s+immunodeficiency/, /anti[\s\-]?hiv/] },
+    { name: 'Pregnancy Test (Beta-hCG)',          signals: [/\bhcg\b/, /beta[\s\-]?hcg/, /pregnancy\s+test/] },
+    { name: 'PSA Test',                           signals: [/\bpsa\b/, /prostate[\s\-]?specific\s+antigen/] },
+    { name: 'Coagulation Profile',                signals: [/coagulation/, /\bpt\b.*\binr\b|\binr\b/, /prothrombin\s+time/, /aptt|ptt/, /fibrinogen/] },
+    { name: 'Cardiac Markers',                    signals: [/troponin/, /cpk[\s\-]?mb|ck[\s\-]?mb/, /cardiac\s+marker/, /myoglobin/, /bnp\b|nt[\s\-]?probnp/] },
+    { name: 'Stool Routine & Microscopy',         signals: [/stool\s+routine|stool\s+analysis|stool\s+microscopy/, /occult\s+blood/, /ova\s+and\s+cyst/] },
+    { name: 'Sputum Culture',                     signals: [/sputum\s+culture/, /acid\s+fast\s+bacilli|afb/, /tuberculosis|tb\s+culture/] },
+    { name: 'Blood Culture',                      signals: [/blood\s+culture/, /bacteremia/, /septicemia/] },
+    { name: 'Urine Culture',                      signals: [/urine\s+culture/, /colony\s+count/, /sensitivity\s+report/] },
+    { name: 'Hormone Panel',                      signals: [/\bfsh\b/, /\blh\b/, /\bestrogen\b|\boestrogen\b/, /\bprogesterone\b/, /\btestosterone\b/, /prolactin/] },
+    { name: 'Comprehensive Metabolic Panel',      signals: [/comprehensive\s+metabolic|cmp\b/, /basic\s+metabolic|bmp\b/] },
+  ];
+
+  // Score each panel — count how many signals match
+  let bestPanel = null;
+  let bestScore = 0;
+
+  for (const panel of panels) {
+    const score = panel.signals.filter((sig) => sig.test(allText)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestPanel = panel.name;
+    }
+  }
+
+  // Need at least 2 signals to be confident
+  if (bestScore >= 2) return bestPanel;
+
+  // Fallback: look for an explicit report title in the raw text
+  const titleMatch = text.match(/(?:report\s+(?:title|name|type)|test\s+name|panel\s+name)\s*[:\-]\s*([A-Za-z][A-Za-z\s\(\)\/]{3,60})/i)
+    || text.match(/^([A-Z][A-Za-z\s\(\)\/]{5,50})\s*(?:report|test|panel|profile)\b/im);
+  if (titleMatch?.[1]) return titleMatch[1].trim();
+
+  // Last resort: join top 2 distinct test names
+  if (labTests?.length > 0) {
+    const top = labTests.slice(0, 2).map((lt) => lt.testName).filter(Boolean);
+    if (top.length > 0) return top.join(' & ');
+  }
+
+  return 'Lab Report';
+};
+
 const parseLabReport = (text) => {
   const common = extractCommonFields(text);
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -307,13 +385,17 @@ const parseLabReport = (text) => {
   const impMatch = text.match(/(?:impression|conclusion|summary|remarks?|interpretation)\s*[:\-]\s*([^\n]{5,400}(?:\n[^\n]{0,200})*)/i);
   if (impMatch?.[1]) impression = impMatch[1].trim().substring(0, 400);
 
+  // AI-inferred panel name used as the record title
+  const labReportName = inferLabReportName(text, labTests);
+
   return {
     ...common,
     labName,
     patientName,
     labTests,
     impression,
-    diagnosis: impression, // map to diagnosis for unified storage
+    diagnosis: labReportName, // used as the display title
+    notes: impression,        // keep impression accessible as notes too
   };
 };
 
