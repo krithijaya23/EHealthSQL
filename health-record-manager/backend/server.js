@@ -70,9 +70,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Static files for uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/profiles', profileRoutes);

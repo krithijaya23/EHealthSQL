@@ -2,11 +2,6 @@ const MedicalRecord = require('../models/MedicalRecord');
 const FamilyProfile = require('../models/FamilyProfile');
 const { runOCR } = require('../services/ocrService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
-const fs = require('fs');
-const path = require('path');
-
-const buildFileUrl = (req, filename) =>
-  `${req.protocol}://${req.get('host')}/uploads/${filename}`;
 
 const parseJSON = (str, fallback = []) => {
   if (!str) return fallback;
@@ -14,26 +9,20 @@ const parseJSON = (str, fallback = []) => {
 };
 
 // ─── POST /api/records/ocr-extract ───────────────────────────────────────────
+// Upload file, run OCR, return extracted data — does NOT save to DB or disk
 const ocrExtract = async (req, res, next) => {
   try {
     if (!req.file) return errorResponse(res, 400, 'No file uploaded');
 
-    const fileData = {
-      filename: req.file.filename, originalName: req.file.originalname,
-      mimetype: req.file.mimetype, size: req.file.size,
-      path: req.file.path, url: buildFileUrl(req, req.file.filename),
-    };
-
     let ocrResult = {};
     try {
-      ocrResult = await runOCR(req.file.path, req.file.mimetype, req.body.recordType || null);
+      ocrResult = await runOCR(req.file.buffer, req.file.mimetype, req.body.recordType || null);
     } catch (err) {
       console.error('OCR error:', err.message);
       ocrResult = { extractedText: '', documentType: 'Other', ocrConfidence: 'none' };
     }
 
     return successResponse(res, 200, 'OCR extraction complete', {
-      file: fileData,
       extracted: {
         documentType: ocrResult.documentType || 'Other',
         ocrConfidence: ocrResult.ocrConfidence || 'none',
@@ -67,38 +56,31 @@ const ocrExtract = async (req, res, next) => {
 };
 
 // ─── POST /api/records/upload ─────────────────────────────────────────────────
+// Save extracted record data to DB — no file stored
 const uploadRecord = async (req, res, next) => {
   try {
-    const { profileId, recordType, existingFilename, extractedText } = req.body;
+    const { profileId, recordType, extractedText } = req.body;
     if (!profileId) return errorResponse(res, 400, 'Profile ID is required');
 
     const profile = await FamilyProfile.findOne({ _id: profileId, ownerUserId: req.user._id, isActive: true });
     if (!profile) return errorResponse(res, 404, 'Profile not found or access denied');
 
-    let fileData = null;
     let ocrData = {};
 
+    // If a file was uploaded directly (without prior ocr-extract step), run OCR now
     if (req.file) {
-      fileData = {
-        filename: req.file.filename, originalName: req.file.originalname,
-        mimetype: req.file.mimetype, size: req.file.size,
-        path: req.file.path, url: buildFileUrl(req, req.file.filename),
-      };
-      try { ocrData = await runOCR(req.file.path, req.file.mimetype, recordType); } catch (e) { console.error('OCR:', e.message); }
-    } else if (existingFilename) {
-      const filePath = path.join(__dirname, '..', 'uploads', existingFilename);
-      if (fs.existsSync(filePath)) {
-        fileData = {
-          filename: existingFilename, originalName: existingFilename,
-          mimetype: existingFilename.match(/\.pdf$/i) ? 'application/pdf' : 'image/jpeg',
-          path: filePath, url: `${req.protocol}://${req.get('host')}/uploads/${existingFilename}`,
-        };
+      try {
+        ocrData = await runOCR(req.file.buffer, req.file.mimetype, recordType);
+      } catch (e) {
+        console.error('OCR:', e.message);
       }
     }
 
     const b = req.body;
     const record = await MedicalRecord.create({
-      profileId, ownerUserId: req.user._id, uploadedFile: fileData,
+      profileId,
+      ownerUserId: req.user._id,
+      // No uploadedFile stored
       recordType: recordType || ocrData.documentType || 'Other',
       doctorName: b.doctorName || ocrData.doctorName || '',
       hospitalName: b.hospitalName || ocrData.hospitalName || '',
@@ -126,7 +108,7 @@ const uploadRecord = async (req, res, next) => {
       ocrConfidence: ocrData.ocrConfidence || '',
     });
 
-    return successResponse(res, 201, 'Record saved successfully', { record, ocrExtracted: ocrData });
+    return successResponse(res, 201, 'Record saved successfully', { record });
   } catch (error) {
     next(error);
   }
@@ -175,6 +157,106 @@ const getRecord = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
+// ─── GET /api/records/detail/:id/download ────────────────────────────────────
+// Generate and stream a plain-text file of all extracted data for this record
+const downloadRecord = async (req, res, next) => {
+  try {
+    const record = await MedicalRecord.findOne({ _id: req.params.id, ownerUserId: req.user._id, isDeleted: false });
+    if (!record) return errorResponse(res, 404, 'Record not found');
+
+    const lines = [];
+    const add = (label, value) => { if (value) lines.push(`${label}: ${value}`); };
+    const divider = () => lines.push('─'.repeat(50));
+
+    lines.push('HEALTH RECORD MANAGER — EXTRACTED DATA');
+    lines.push(`Generated: ${new Date().toLocaleString()}`);
+    divider();
+
+    add('Record Type', record.recordType);
+    add('Visit Date', record.visitDate ? new Date(record.visitDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '');
+    add('Doctor', record.doctorName);
+    add('Hospital / Clinic', record.hospitalName);
+    add('Diagnosis', record.diagnosis);
+    add('Notes', record.notes);
+
+    if (record.recordType === 'Prescription' && record.medicines?.length > 0) {
+      divider();
+      lines.push('PRESCRIBED MEDICINES');
+      record.medicines.forEach((m, i) => {
+        lines.push(`  ${i + 1}. ${m.name || '—'}${m.dosage ? ' | ' + m.dosage : ''}${m.frequency ? ' | ' + m.frequency : ''}${m.duration ? ' | ' + m.duration : ''}`);
+      });
+    }
+
+    if (record.recordType === 'Lab Report') {
+      divider();
+      add('Lab / Diagnostic Centre', record.labName);
+      add('Patient Name', record.patientName);
+      add('Impression', record.impression);
+      if (record.labTests?.length > 0) {
+        lines.push('');
+        lines.push('TEST RESULTS');
+        lines.push('  Test Name                    Value      Unit         Normal Range    Status');
+        lines.push('  ' + '─'.repeat(80));
+        record.labTests.forEach((t) => {
+          const name = (t.testName || '—').padEnd(30);
+          const val = (t.value || '—').padEnd(10);
+          const unit = (t.unit || '—').padEnd(13);
+          const range = (t.normalRange || '—').padEnd(16);
+          lines.push(`  ${name} ${val} ${unit} ${range} ${t.status || '—'}`);
+        });
+      }
+    }
+
+    if (record.recordType === 'Scan') {
+      divider();
+      add('Scan Type', record.scanType);
+      add('Body Part / Region', record.bodyPart);
+      add('Findings', record.findings);
+      add('Impression', record.impression);
+    }
+
+    if (record.recordType === 'Discharge Summary') {
+      divider();
+      add('Admission Date', record.admissionDate);
+      add('Discharge Date', record.dischargeDate);
+      add('Condition at Discharge', record.conditionAtDischarge);
+      add('Treatment Summary', record.treatmentSummary);
+      add('Discharge Advice', record.dischargeAdvice);
+    }
+
+    if (record.recordType === 'Medical Bill') {
+      divider();
+      add('Bill Number', record.billNumber);
+      add('Total Amount', record.totalAmount ? `Rs. ${record.totalAmount}` : '');
+      if (record.lineItems?.length > 0) {
+        lines.push('');
+        lines.push('LINE ITEMS');
+        record.lineItems.forEach((item, i) => {
+          lines.push(`  ${i + 1}. ${item.description || '—'} — Rs. ${item.amount || '—'}`);
+        });
+      }
+    }
+
+    if (record.extractedText) {
+      divider();
+      lines.push('RAW OCR TEXT');
+      lines.push(record.extractedText);
+    }
+
+    divider();
+    lines.push('END OF RECORD');
+
+    const content = lines.join('\n');
+    const filename = `record-${record.recordType.replace(/\s+/g, '-').toLowerCase()}-${new Date(record.visitDate).toISOString().split('T')[0]}.txt`;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(content);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── PUT /api/records/:id ─────────────────────────────────────────────────────
 const updateRecord = async (req, res, next) => {
   try {
@@ -192,7 +274,6 @@ const updateRecord = async (req, res, next) => {
       billNumber: b.billNumber, totalAmount: b.totalAmount,
       lineItems: parseJSON(b.lineItems),
     };
-    // Remove undefined keys
     Object.keys(updates).forEach((k) => updates[k] === undefined && delete updates[k]);
 
     const record = await MedicalRecord.findOneAndUpdate(
@@ -216,23 +297,4 @@ const deleteRecord = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
-// ─── POST /api/records/:id/ocr ────────────────────────────────────────────────
-const rerunOCR = async (req, res, next) => {
-  try {
-    const record = await MedicalRecord.findOne({ _id: req.params.id, ownerUserId: req.user._id });
-    if (!record?.uploadedFile?.path) return errorResponse(res, 404, 'Record or file not found');
-    const ocrData = await runOCR(record.uploadedFile.path, record.uploadedFile.mimetype, record.recordType);
-    record.extractedText = ocrData.extractedText;
-    record.ocrProcessed = true;
-    record.ocrConfidence = ocrData.ocrConfidence;
-    if (!record.doctorName && ocrData.doctorName) record.doctorName = ocrData.doctorName;
-    if (!record.hospitalName && ocrData.hospitalName) record.hospitalName = ocrData.hospitalName;
-    if (!record.diagnosis && ocrData.diagnosis) record.diagnosis = ocrData.diagnosis;
-    if (!record.medicines?.length && ocrData.medicines?.length) record.medicines = ocrData.medicines;
-    if (!record.labTests?.length && ocrData.labTests?.length) record.labTests = ocrData.labTests;
-    await record.save();
-    return successResponse(res, 200, 'OCR re-processed', { record, ocrExtracted: ocrData });
-  } catch (error) { next(error); }
-};
-
-module.exports = { ocrExtract, uploadRecord, getRecords, getRecord, updateRecord, deleteRecord, rerunOCR };
+module.exports = { ocrExtract, uploadRecord, getRecords, getRecord, downloadRecord, updateRecord, deleteRecord };

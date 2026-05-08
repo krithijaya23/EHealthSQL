@@ -2,11 +2,12 @@ const vision = require('@google-cloud/vision');
 const Tesseract = require('tesseract.js');
 const pdfParse = require('pdf-parse');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // ─── Initialize Google Vision ─────────────────────────────────────────────────
 let visionClient = null;
 try {
-  // Only attempt if credentials file exists and is non-empty
   const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   const fs2 = require('fs');
   if (credPath && fs2.existsSync(credPath) && fs2.statSync(credPath).size > 10) {
@@ -19,12 +20,23 @@ try {
   console.warn('⚠️  Google Vision unavailable, falling back to Tesseract:', e.message);
 }
 
+// ─── Write buffer to a temp file, run fn(tempPath), then clean up ─────────────
+const withTempFile = async (buffer, ext, fn) => {
+  const tmpPath = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+  fs.writeFileSync(tmpPath, buffer);
+  try {
+    return await fn(tmpPath);
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+};
+
 // ─── Raw text extraction ──────────────────────────────────────────────────────
-const extractTextFromImage = async (filePath) => {
-  // Try Google Vision first
+const extractTextFromImageBuffer = async (buffer) => {
+  // Try Google Vision first (accepts buffer directly)
   if (visionClient) {
     try {
-      const [result] = await visionClient.textDetection(filePath);
+      const [result] = await visionClient.textDetection({ image: { content: buffer } });
       const text = result.fullTextAnnotation?.text || '';
       if (text.trim().length > 0) {
         console.log('✅ Google Vision extracted', text.length, 'chars');
@@ -36,23 +48,25 @@ const extractTextFromImage = async (filePath) => {
     }
   }
 
-  // Tesseract fallback
-  try {
-    console.log('🔄 Running Tesseract OCR on:', filePath);
-    const result = await Tesseract.recognize(filePath, 'eng', {
-      logger: (m) => { if (m.status === 'recognizing text') process.stdout.write(`\r🔄 Tesseract: ${Math.round(m.progress * 100)}%`); },
-    });
-    console.log('\n✅ Tesseract extracted', result.data.text.length, 'chars');
-    return result.data.text;
-  } catch (err) {
-    console.error('❌ Tesseract failed:', err.message);
-    return '';
-  }
+  // Tesseract needs a file path — write to temp
+  return withTempFile(buffer, '.jpg', async (tmpPath) => {
+    try {
+      console.log('🔄 Running Tesseract OCR on temp file');
+      const result = await Tesseract.recognize(tmpPath, 'eng', {
+        logger: (m) => { if (m.status === 'recognizing text') process.stdout.write(`\r🔄 Tesseract: ${Math.round(m.progress * 100)}%`); },
+      });
+      console.log('\n✅ Tesseract extracted', result.data.text.length, 'chars');
+      return result.data.text;
+    } catch (err) {
+      console.error('❌ Tesseract failed:', err.message);
+      return '';
+    }
+  });
 };
 
-const extractTextFromPDF = async (filePath) => {
+const extractTextFromPDFBuffer = async (buffer) => {
   try {
-    const data = await pdfParse(fs.readFileSync(filePath));
+    const data = await pdfParse(buffer);
     console.log('✅ PDF text extracted');
     return data.text;
   } catch (err) {
@@ -439,12 +453,12 @@ const parseByDocumentType = (text, documentType) => {
   }
 };
 
-// ─── Full OCR pipeline ────────────────────────────────────────────────────────
-const runOCR = async (filePath, mimetype, hintType = null) => {
-  // Extract raw text
+// ─── Full OCR pipeline — accepts a buffer + mimetype ─────────────────────────
+const runOCR = async (buffer, mimetype, hintType = null) => {
+  // Extract raw text from buffer
   const rawText = mimetype === 'application/pdf'
-    ? await extractTextFromPDF(filePath)
-    : await extractTextFromImage(filePath);
+    ? await extractTextFromPDFBuffer(buffer)
+    : await extractTextFromImageBuffer(buffer);
 
   // Detect document type (use hint if provided, e.g. user pre-selected)
   const documentType = hintType && hintType !== 'Other'
@@ -470,6 +484,6 @@ module.exports = {
   runOCR,
   detectDocumentType,
   parseByDocumentType,
-  extractTextFromImage,
-  extractTextFromPDF,
+  extractTextFromImageBuffer,
+  extractTextFromPDFBuffer,
 };

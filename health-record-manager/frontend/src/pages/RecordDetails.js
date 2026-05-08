@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Download, Share2, Edit2, Trash2, FileText,
-  User, Building2, Calendar, Pill, FileImage, Sparkles,
-  Save, X, CheckCircle, RefreshCw, AlertCircle, Plus,
+  User, Building2, Calendar, Pill, Sparkles,
+  Save, X, CheckCircle, AlertCircle, Plus,
   FlaskConical, Scan, ClipboardList, Receipt, Activity,
-  Heart, TrendingUp, TrendingDown
+  Heart, TrendingUp, TrendingDown, RefreshCw
 } from 'lucide-react';
 import api from '../services/api';
 import { format } from 'date-fns';
@@ -259,7 +259,7 @@ const RecordDetails = () => {
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [rerunningOCR, setRerunningOCR] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [editForm, setEditForm] = useState({});
 
   useEffect(() => { fetchRecord(); }, [id]);
@@ -335,16 +335,26 @@ const RecordDetails = () => {
     }
   };
 
-  const handleRerunOCR = async () => {
-    setRerunningOCR(true);
+  const handleDownload = async () => {
+    setDownloading(true);
     try {
-      const { data } = await api.post(`/records/${id}/ocr`);
-      setRecord(data.record);
-      toast.success('OCR re-processed');
+      const response = await api.get(`/records/detail/${id}/download`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/plain' }));
+      const link = document.createElement('a');
+      link.href = url;
+      const disposition = response.headers['content-disposition'];
+      const filename = disposition
+        ? disposition.split('filename=')[1]?.replace(/"/g, '')
+        : `record-${id}.txt`;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
     } catch {
-      toast.error('OCR re-processing failed');
+      toast.error('Download failed');
     } finally {
-      setRerunningOCR(false);
+      setDownloading(false);
     }
   };
 
@@ -363,11 +373,9 @@ const RecordDetails = () => {
         <div className="record-details__actions">
           {!editing ? (
             <>
-              {record.uploadedFile && (
-                <button className="btn btn-ghost btn-sm" onClick={handleRerunOCR} disabled={rerunningOCR}>
-                  {rerunningOCR ? <><RefreshCw size={13} className="spin-icon" /> Processing...</> : <><RefreshCw size={13} /> Re-run OCR</>}
-                </button>
-              )}
+              <button className="btn btn-secondary btn-sm" onClick={handleDownload} disabled={downloading}>
+                {downloading ? <><RefreshCw size={13} className="spin-icon" /> Downloading...</> : <><Download size={13} /> Download Data</>}
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={() => navigate('/share')}><Share2 size={13} /> Share</button>
               <button className="btn btn-ghost btn-sm" onClick={startEdit}><Edit2 size={13} /> Edit</button>
               <button className="btn btn-danger btn-sm" onClick={handleDelete} disabled={deleting}>
@@ -459,22 +467,6 @@ const RecordDetails = () => {
 
         {/* Sidebar */}
         <div className="record-details__sidebar">
-          {record.uploadedFile && (
-            <div className="card record-details__section">
-              <h3 className="record-details__section-title"><FileImage size={14} /> Document</h3>
-              {record.uploadedFile.mimetype?.startsWith('image') ? (
-                <img src={record.uploadedFile.url} alt="Medical record" className="record-details__image"
-                  onError={(e) => { e.target.style.display = 'none'; }} />
-              ) : (
-                <div className="record-details__pdf"><FileText size={28} /><p>{record.uploadedFile.originalName}</p></div>
-              )}
-              <a href={record.uploadedFile.url} target="_blank" rel="noreferrer"
-                className="btn btn-secondary btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}>
-                <Download size={13} /> Download
-              </a>
-            </div>
-          )}
-
           <div className="card record-details__section">
             <h3 className="record-details__section-title">Record Info</h3>
             <div className="record-details__info-list">

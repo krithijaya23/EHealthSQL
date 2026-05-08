@@ -333,7 +333,6 @@ const UploadRecord = () => {
   const [file, setFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
   const [ocrResult, setOcrResult] = useState(null);
-  const [extractedFilename, setExtractedFilename] = useState('');
   const [form, setForm] = useState(emptyForm(activeProfile?._id));
 
   // ── Dropzone ────────────────────────────────────────────────────────────────
@@ -344,7 +343,6 @@ const UploadRecord = () => {
     setFile(f);
     setPhase('idle');
     setOcrResult(null);
-    setExtractedFilename('');
     if (f.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => setFilePreview(e.target.result);
@@ -372,7 +370,6 @@ const UploadRecord = () => {
       const { data } = await api.post('/records/ocr-extract', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       const ext = data.extracted;
       setOcrResult(ext);
-      setExtractedFilename(data.file.filename);
 
       // Auto-update record type if AI detected something different
       const detectedType = ext.documentType || form.recordType;
@@ -422,12 +419,8 @@ const UploadRecord = () => {
     setPhase('saving');
     try {
       const fd = new FormData();
-      if (extractedFilename) {
-        fd.append('existingFilename', extractedFilename);
-        if (ocrResult?.extractedText) fd.append('extractedText', ocrResult.extractedText);
-      } else if (file) {
-        fd.append('file', file);
-      }
+      // Include extracted text from OCR if available
+      if (ocrResult?.extractedText) fd.append('extractedText', ocrResult.extractedText);
       // Append all form fields
       const jsonFields = ['medicines', 'labTests', 'lineItems'];
       Object.entries(form).forEach(([k, v]) => {
@@ -445,7 +438,7 @@ const UploadRecord = () => {
 
   const resetAll = () => {
     setFile(null); setFilePreview(null); setOcrResult(null);
-    setExtractedFilename(''); setPhase('idle');
+    setPhase('idle');
     setForm(emptyForm(activeProfile?._id));
   };
 
