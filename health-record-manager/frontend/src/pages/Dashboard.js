@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   Upload, ClipboardList, Share2, FileText,
   TrendingUp, Activity, ArrowRight, Sparkles,
-  Pill, FlaskConical, Scan, ClipboardCheck, Receipt
+  Pill, FlaskConical, Scan, ClipboardCheck, Receipt,
+  Bell, AlertCircle, Clock, Stethoscope
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { format } from 'date-fns';
+import { format, isToday, isPast, parseISO } from 'date-fns';
 import './Dashboard.css';
 
 // ─── Type icon map ────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ const Dashboard = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [todayReminders, setTodayReminders] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -73,6 +75,21 @@ const Dashboard = () => {
       }
     };
     fetchStats();
+  }, []);
+
+  // Load today's reminders from localStorage
+  useEffect(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem('hrm_reminders') || '[]');
+      const today = all.filter((r) => {
+        if (r.done) return false;
+        const dt = parseISO(`${r.date}T${r.time || '00:00'}`);
+        return isToday(dt) || (isPast(dt) && !r.done);
+      }).slice(0, 4);
+      setTodayReminders(today);
+    } catch {
+      setTodayReminders([]);
+    }
   }, []);
 
   const firstName = user?.fullName?.split(' ')[0] || 'User';
@@ -210,6 +227,63 @@ const Dashboard = () => {
                 <TrendingUp size={15} /> View Insights
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Today's Reminders */}
+        <div className="dashboard__section">
+          <div className="section-header">
+            <h2 className="section-title">
+              <Bell size={16} style={{ marginRight: 6 }} />
+              Reminders
+              {todayReminders.length > 0 && (
+                <span className="badge badge-red" style={{ marginLeft: 8, fontSize: 11 }}>{todayReminders.length}</span>
+              )}
+            </h2>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/reminders')}>
+              View all <ArrowRight size={14} />
+            </button>
+          </div>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {todayReminders.length === 0 ? (
+              <div style={{ padding: '28px 20px', textAlign: 'center' }}>
+                <Bell size={32} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No pending reminders</p>
+                <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={() => navigate('/reminders')}>
+                  + Add Reminder
+                </button>
+              </div>
+            ) : (
+              todayReminders.map((r, i) => {
+                const isOverdue = isPast(parseISO(`${r.date}T${r.time || '00:00'}`));
+                const ICONS = { medicine: Pill, appointment: Stethoscope, test: ClipboardList, other: Bell };
+                const COLORS = { medicine: '#2563eb', appointment: '#7c3aed', test: '#059669', other: '#d97706' };
+                const Icon = ICONS[r.type] || Bell;
+                const color = COLORS[r.type] || '#d97706';
+                return (
+                  <div key={r.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '12px 16px',
+                      borderBottom: i < todayReminders.length - 1 ? '1px solid var(--border)' : 'none',
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => navigate('/reminders')}>
+                    <div style={{ width: 34, height: 34, borderRadius: 10, background: color + '18', color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Icon size={16} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.title}</p>
+                      <p style={{ fontSize: 11, color: isOverdue ? '#dc2626' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                        {isOverdue ? <AlertCircle size={10} /> : <Clock size={10} />}
+                        {isOverdue ? 'Overdue' : r.time ? `Today at ${r.time}` : 'Today'}
+                      </p>
+                    </div>
+                    {isOverdue && <span className="badge badge-red" style={{ fontSize: 10 }}>!</span>}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>
