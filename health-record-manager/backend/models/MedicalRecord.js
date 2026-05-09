@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 
-// ── Sub-schemas ───────────────────────────────────────────────────────────────
 const medicineSchema = new mongoose.Schema({
   name: { type: String, trim: true },
   dosage: { type: String, trim: true },
@@ -8,7 +7,6 @@ const medicineSchema = new mongoose.Schema({
   duration: { type: String, trim: true },
 });
 
-// Lab test result row
 const labTestSchema = new mongoose.Schema({
   testName: { type: String, trim: true },
   value: { type: String, trim: true },
@@ -21,79 +19,71 @@ const labTestSchema = new mongoose.Schema({
   },
 });
 
-// Medical bill line item
 const billItemSchema = new mongoose.Schema({
   description: { type: String, trim: true },
   amount: { type: String, trim: true },
 });
 
-// ── Main schema ───────────────────────────────────────────────────────────────
 const medicalRecordSchema = new mongoose.Schema(
   {
-    profileId: { type: mongoose.Schema.Types.ObjectId, ref: 'FamilyProfile', required: true },
+    // Records belong directly to a user — no family profile indirection
     ownerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
 
-    uploadedFile: {
-      filename: String, originalName: String,
-      mimetype: String, size: Number, path: String, url: String,
-    },
-
-    // Detected or user-selected document type
     recordType: {
       type: String,
       enum: ['Prescription', 'Lab Report', 'Scan', 'Discharge Summary', 'Medical Bill', 'Vaccination', 'Other'],
       default: 'Other',
     },
 
-    // ── Common fields (all types) ─────────────────────────────────────────
-    doctorName: { type: String, trim: true, default: '' },
+    // Common fields
+    doctorName:   { type: String, trim: true, default: '' },
     hospitalName: { type: String, trim: true, default: '' },
-    diagnosis: { type: String, trim: true, default: '' },
-    notes: { type: String, trim: true, default: '' },
-    visitDate: { type: Date, default: Date.now },
+    diagnosis:    { type: String, trim: true, default: '' },
+    notes:        { type: String, trim: true, default: '' },
+    visitDate:    { type: Date, default: Date.now },
 
-    // ── Prescription fields ───────────────────────────────────────────────
+    // Prescription
     medicines: [medicineSchema],
 
-    // ── Lab Report fields ─────────────────────────────────────────────────
-    labName: { type: String, trim: true, default: '' },
+    // Lab Report
+    labName:     { type: String, trim: true, default: '' },
     patientName: { type: String, trim: true, default: '' },
-    labTests: [labTestSchema],
-    impression: { type: String, trim: true, default: '' },
+    labTests:    [labTestSchema],
+    impression:  { type: String, trim: true, default: '' },
 
-    // ── Scan / Radiology fields ───────────────────────────────────────────
+    // Scan
     scanType: { type: String, trim: true, default: '' },
     bodyPart: { type: String, trim: true, default: '' },
     findings: { type: String, trim: true, default: '' },
 
-    // ── Discharge Summary fields ──────────────────────────────────────────
-    admissionDate: { type: String, default: '' },
-    dischargeDate: { type: String, default: '' },
-    treatmentSummary: { type: String, trim: true, default: '' },
-    dischargeAdvice: { type: String, trim: true, default: '' },
+    // Discharge Summary
+    admissionDate:        { type: String, default: '' },
+    dischargeDate:        { type: String, default: '' },
+    treatmentSummary:     { type: String, trim: true, default: '' },
+    dischargeAdvice:      { type: String, trim: true, default: '' },
     conditionAtDischarge: { type: String, trim: true, default: '' },
 
-    // ── Medical Bill fields ───────────────────────────────────────────────
-    billNumber: { type: String, trim: true, default: '' },
+    // Medical Bill
+    billNumber:  { type: String, trim: true, default: '' },
     totalAmount: { type: String, trim: true, default: '' },
-    lineItems: [billItemSchema],
+    lineItems:   [billItemSchema],
 
-    // ── OCR metadata ──────────────────────────────────────────────────────
+    // OCR metadata
     extractedText: { type: String, default: '' },
-    ocrProcessed: { type: Boolean, default: false },
+    ocrProcessed:  { type: Boolean, default: false },
     ocrConfidence: { type: String, enum: ['high', 'low', 'none', ''], default: '' },
 
-    // ── AI summaries ──────────────────────────────────────────────────────
+    // AI summaries
     aiPatientSummary: { type: String, default: '' },
-    aiDoctorSummary: { type: String, default: '' },
+    aiDoctorSummary:  { type: String, default: '' },
 
-    tags: [{ type: String }],
+    tags:      [{ type: String }],
     isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-medicalRecordSchema.index({ profileId: 1, visitDate: -1 });
+medicalRecordSchema.index({ ownerUserId: 1, visitDate: -1 });
 medicalRecordSchema.index({ doctorName: 'text', hospitalName: 'text', diagnosis: 'text', 'labTests.testName': 'text' });
 
 module.exports = mongoose.model('MedicalRecord', medicalRecordSchema);

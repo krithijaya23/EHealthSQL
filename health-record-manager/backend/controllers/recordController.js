@@ -1,5 +1,4 @@
 const MedicalRecord = require('../models/MedicalRecord');
-const FamilyProfile = require('../models/FamilyProfile');
 const { runOCR } = require('../services/ocrService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
@@ -9,7 +8,6 @@ const parseJSON = (str, fallback = []) => {
 };
 
 // ─── POST /api/records/ocr-extract ───────────────────────────────────────────
-// Upload file, run OCR, return extracted data — does NOT save to DB or disk
 const ocrExtract = async (req, res, next) => {
   try {
     if (!req.file) return errorResponse(res, 400, 'No file uploaded');
@@ -24,31 +22,31 @@ const ocrExtract = async (req, res, next) => {
 
     return successResponse(res, 200, 'OCR extraction complete', {
       extracted: {
-        documentType: ocrResult.documentType || 'Other',
-        ocrConfidence: ocrResult.ocrConfidence || 'none',
-        extractedText: ocrResult.extractedText || '',
-        doctorName: ocrResult.doctorName || '',
-        hospitalName: ocrResult.hospitalName || '',
-        diagnosis: ocrResult.diagnosis || '',
-        labReportName: ocrResult.labReportName || '',
-        notes: ocrResult.notes || '',
-        visitDate: ocrResult.visitDate || '',
-        medicines: ocrResult.medicines || [],
-        labName: ocrResult.labName || '',
-        patientName: ocrResult.patientName || '',
-        labTests: ocrResult.labTests || [],
-        impression: ocrResult.impression || '',
-        scanType: ocrResult.scanType || '',
-        bodyPart: ocrResult.bodyPart || '',
-        findings: ocrResult.findings || '',
-        admissionDate: ocrResult.admissionDate || '',
-        dischargeDate: ocrResult.dischargeDate || '',
-        treatmentSummary: ocrResult.treatmentSummary || '',
-        dischargeAdvice: ocrResult.dischargeAdvice || '',
+        documentType:         ocrResult.documentType || 'Other',
+        ocrConfidence:        ocrResult.ocrConfidence || 'none',
+        extractedText:        ocrResult.extractedText || '',
+        doctorName:           ocrResult.doctorName || '',
+        hospitalName:         ocrResult.hospitalName || '',
+        diagnosis:            ocrResult.diagnosis || '',
+        labReportName:        ocrResult.labReportName || '',
+        notes:                ocrResult.notes || '',
+        visitDate:            ocrResult.visitDate || '',
+        medicines:            ocrResult.medicines || [],
+        labName:              ocrResult.labName || '',
+        patientName:          ocrResult.patientName || '',
+        labTests:             ocrResult.labTests || [],
+        impression:           ocrResult.impression || '',
+        scanType:             ocrResult.scanType || '',
+        bodyPart:             ocrResult.bodyPart || '',
+        findings:             ocrResult.findings || '',
+        admissionDate:        ocrResult.admissionDate || '',
+        dischargeDate:        ocrResult.dischargeDate || '',
+        treatmentSummary:     ocrResult.treatmentSummary || '',
+        dischargeAdvice:      ocrResult.dischargeAdvice || '',
         conditionAtDischarge: ocrResult.conditionAtDischarge || '',
-        billNumber: ocrResult.billNumber || '',
-        totalAmount: ocrResult.totalAmount || '',
-        lineItems: ocrResult.lineItems || [],
+        billNumber:           ocrResult.billNumber || '',
+        totalAmount:          ocrResult.totalAmount || '',
+        lineItems:            ocrResult.lineItems || [],
       },
     });
   } catch (error) {
@@ -57,18 +55,11 @@ const ocrExtract = async (req, res, next) => {
 };
 
 // ─── POST /api/records/upload ─────────────────────────────────────────────────
-// Save extracted record data to DB — no file stored
 const uploadRecord = async (req, res, next) => {
   try {
-    const { profileId, recordType, extractedText } = req.body;
-    if (!profileId) return errorResponse(res, 400, 'Profile ID is required');
-
-    const profile = await FamilyProfile.findOne({ _id: profileId, ownerUserId: req.user._id, isActive: true });
-    if (!profile) return errorResponse(res, 404, 'Profile not found or access denied');
+    const { recordType, extractedText } = req.body;
 
     let ocrData = {};
-
-    // If a file was uploaded directly (without prior ocr-extract step), run OCR now
     if (req.file) {
       try {
         ocrData = await runOCR(req.file.buffer, req.file.mimetype, recordType);
@@ -79,34 +70,32 @@ const uploadRecord = async (req, res, next) => {
 
     const b = req.body;
     const record = await MedicalRecord.create({
-      profileId,
-      ownerUserId: req.user._id,
-      // No uploadedFile stored
-      recordType: recordType || ocrData.documentType || 'Other',
-      doctorName: b.doctorName || ocrData.doctorName || '',
-      hospitalName: b.hospitalName || ocrData.hospitalName || '',
-      diagnosis: b.diagnosis || ocrData.diagnosis || '',
-      notes: b.notes || ocrData.notes || '',
-      visitDate: b.visitDate || ocrData.visitDate || new Date(),
-      medicines: parseJSON(b.medicines).length > 0 ? parseJSON(b.medicines) : (ocrData.medicines || []),
-      labName: b.labName || ocrData.labName || '',
-      patientName: b.patientName || ocrData.patientName || '',
-      labTests: parseJSON(b.labTests).length > 0 ? parseJSON(b.labTests) : (ocrData.labTests || []),
-      impression: b.impression || ocrData.impression || '',
-      scanType: b.scanType || ocrData.scanType || '',
-      bodyPart: b.bodyPart || ocrData.bodyPart || '',
-      findings: b.findings || ocrData.findings || '',
-      admissionDate: b.admissionDate || ocrData.admissionDate || '',
-      dischargeDate: b.dischargeDate || ocrData.dischargeDate || '',
-      treatmentSummary: b.treatmentSummary || ocrData.treatmentSummary || '',
-      dischargeAdvice: b.dischargeAdvice || ocrData.dischargeAdvice || '',
+      ownerUserId:          req.user._id,
+      recordType:           recordType || ocrData.documentType || 'Other',
+      doctorName:           b.doctorName || ocrData.doctorName || '',
+      hospitalName:         b.hospitalName || ocrData.hospitalName || '',
+      diagnosis:            b.diagnosis || ocrData.diagnosis || '',
+      notes:                b.notes || ocrData.notes || '',
+      visitDate:            b.visitDate || ocrData.visitDate || new Date(),
+      medicines:            parseJSON(b.medicines).length > 0 ? parseJSON(b.medicines) : (ocrData.medicines || []),
+      labName:              b.labName || ocrData.labName || '',
+      patientName:          b.patientName || ocrData.patientName || '',
+      labTests:             parseJSON(b.labTests).length > 0 ? parseJSON(b.labTests) : (ocrData.labTests || []),
+      impression:           b.impression || ocrData.impression || '',
+      scanType:             b.scanType || ocrData.scanType || '',
+      bodyPart:             b.bodyPart || ocrData.bodyPart || '',
+      findings:             b.findings || ocrData.findings || '',
+      admissionDate:        b.admissionDate || ocrData.admissionDate || '',
+      dischargeDate:        b.dischargeDate || ocrData.dischargeDate || '',
+      treatmentSummary:     b.treatmentSummary || ocrData.treatmentSummary || '',
+      dischargeAdvice:      b.dischargeAdvice || ocrData.dischargeAdvice || '',
       conditionAtDischarge: b.conditionAtDischarge || ocrData.conditionAtDischarge || '',
-      billNumber: b.billNumber || ocrData.billNumber || '',
-      totalAmount: b.totalAmount || ocrData.totalAmount || '',
-      lineItems: parseJSON(b.lineItems).length > 0 ? parseJSON(b.lineItems) : (ocrData.lineItems || []),
-      extractedText: extractedText || ocrData.extractedText || '',
-      ocrProcessed: !!(extractedText || ocrData.extractedText),
-      ocrConfidence: ocrData.ocrConfidence || '',
+      billNumber:           b.billNumber || ocrData.billNumber || '',
+      totalAmount:          b.totalAmount || ocrData.totalAmount || '',
+      lineItems:            parseJSON(b.lineItems).length > 0 ? parseJSON(b.lineItems) : (ocrData.lineItems || []),
+      extractedText:        extractedText || ocrData.extractedText || '',
+      ocrProcessed:         !!(extractedText || ocrData.extractedText),
+      ocrConfidence:        ocrData.ocrConfidence || '',
     });
 
     return successResponse(res, 201, 'Record saved successfully', { record });
@@ -115,33 +104,35 @@ const uploadRecord = async (req, res, next) => {
   }
 };
 
-// ─── GET /api/records/:profileId ─────────────────────────────────────────────
+// ─── GET /api/records ─────────────────────────────────────────────────────────
 const getRecords = async (req, res, next) => {
   try {
-    const { profileId } = req.params;
     const { search, doctor, hospital, diagnosis, recordType, startDate, endDate, page = 1, limit = 10 } = req.query;
-    const query = { profileId, isDeleted: false };
+    const query = { ownerUserId: req.user._id, isDeleted: false };
+
     if (search) {
       query.$or = [
-        { doctorName: { $regex: search, $options: 'i' } },
-        { hospitalName: { $regex: search, $options: 'i' } },
-        { diagnosis: { $regex: search, $options: 'i' } },
-        { 'medicines.name': { $regex: search, $options: 'i' } },
+        { doctorName:          { $regex: search, $options: 'i' } },
+        { hospitalName:        { $regex: search, $options: 'i' } },
+        { diagnosis:           { $regex: search, $options: 'i' } },
+        { 'medicines.name':    { $regex: search, $options: 'i' } },
         { 'labTests.testName': { $regex: search, $options: 'i' } },
       ];
     }
-    if (doctor) query.doctorName = { $regex: doctor, $options: 'i' };
-    if (hospital) query.hospitalName = { $regex: hospital, $options: 'i' };
-    if (diagnosis) query.diagnosis = { $regex: diagnosis, $options: 'i' };
-    if (recordType) query.recordType = recordType;
+    if (doctor)     query.doctorName   = { $regex: doctor,   $options: 'i' };
+    if (hospital)   query.hospitalName = { $regex: hospital, $options: 'i' };
+    if (diagnosis)  query.diagnosis    = { $regex: diagnosis, $options: 'i' };
+    if (recordType) query.recordType   = recordType;
     if (startDate || endDate) {
       query.visitDate = {};
       if (startDate) query.visitDate.$gte = new Date(startDate);
-      if (endDate) query.visitDate.$lte = new Date(endDate);
+      if (endDate)   query.visitDate.$lte = new Date(endDate);
     }
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const skip  = (parseInt(page) - 1) * parseInt(limit);
     const total = await MedicalRecord.countDocuments(query);
     const records = await MedicalRecord.find(query).sort({ visitDate: -1 }).skip(skip).limit(parseInt(limit));
+
     return successResponse(res, 200, 'Records fetched', {
       records,
       pagination: { total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)), limit: parseInt(limit) },
@@ -159,7 +150,6 @@ const getRecord = async (req, res, next) => {
 };
 
 // ─── GET /api/records/detail/:id/download ────────────────────────────────────
-// Generate and stream a plain-text file of all extracted data for this record
 const downloadRecord = async (req, res, next) => {
   try {
     const record = await MedicalRecord.findOne({ _id: req.params.id, ownerUserId: req.user._id, isDeleted: false });
@@ -199,9 +189,9 @@ const downloadRecord = async (req, res, next) => {
         lines.push('  Test Name                    Value      Unit         Normal Range    Status');
         lines.push('  ' + '─'.repeat(80));
         record.labTests.forEach((t) => {
-          const name = (t.testName || '—').padEnd(30);
-          const val = (t.value || '—').padEnd(10);
-          const unit = (t.unit || '—').padEnd(13);
+          const name  = (t.testName    || '—').padEnd(30);
+          const val   = (t.value       || '—').padEnd(10);
+          const unit  = (t.unit        || '—').padEnd(13);
           const range = (t.normalRange || '—').padEnd(16);
           lines.push(`  ${name} ${val} ${unit} ${range} ${t.status || '—'}`);
         });
@@ -247,7 +237,7 @@ const downloadRecord = async (req, res, next) => {
     divider();
     lines.push('END OF RECORD');
 
-    const content = lines.join('\n');
+    const content  = lines.join('\n');
     const filename = `record-${record.recordType.replace(/\s+/g, '-').toLowerCase()}-${new Date(record.visitDate).toISOString().split('T')[0]}.txt`;
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -265,15 +255,15 @@ const updateRecord = async (req, res, next) => {
     const updates = {
       recordType: b.recordType, doctorName: b.doctorName, hospitalName: b.hospitalName,
       diagnosis: b.diagnosis, notes: b.notes, visitDate: b.visitDate,
-      medicines: parseJSON(b.medicines),
+      medicines:            parseJSON(b.medicines),
       labName: b.labName, patientName: b.patientName,
-      labTests: parseJSON(b.labTests),
+      labTests:             parseJSON(b.labTests),
       impression: b.impression, scanType: b.scanType, bodyPart: b.bodyPart, findings: b.findings,
       admissionDate: b.admissionDate, dischargeDate: b.dischargeDate,
       treatmentSummary: b.treatmentSummary, dischargeAdvice: b.dischargeAdvice,
       conditionAtDischarge: b.conditionAtDischarge,
       billNumber: b.billNumber, totalAmount: b.totalAmount,
-      lineItems: parseJSON(b.lineItems),
+      lineItems:            parseJSON(b.lineItems),
     };
     Object.keys(updates).forEach((k) => updates[k] === undefined && delete updates[k]);
 

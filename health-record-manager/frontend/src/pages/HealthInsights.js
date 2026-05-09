@@ -4,7 +4,6 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { TrendingUp, Activity, Sparkles, Brain, AlertCircle, User, Stethoscope } from 'lucide-react';
-import { useProfile } from '../context/ProfileContext';
 import api from '../services/api';
 import './HealthInsights.css';
 
@@ -24,20 +23,18 @@ const InsightCard = ({ icon: Icon, title, value, color, sub }) => (
 );
 
 const HealthInsights = () => {
-  const { activeProfile } = useProfile();
   const [analytics, setAnalytics] = useState(null);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [summaryTab, setSummaryTab] = useState('patient');
 
   useEffect(() => {
-    if (!activeProfile) { setLoading(false); return; }
     const fetch = async () => {
       setLoading(true);
       try {
         const [analyticsRes, summaryRes] = await Promise.all([
-          api.get(`/analytics/${activeProfile._id}`),
-          api.get(`/summary/${activeProfile._id}`),
+          api.get('/analytics'),
+          api.get('/summary'),
         ]);
         setAnalytics(analyticsRes.data.analytics);
         setSummary(summaryRes.data.summary);
@@ -48,9 +45,9 @@ const HealthInsights = () => {
       }
     };
     fetch();
-  }, [activeProfile]);
+  }, []);
 
-  if (!activeProfile || loading) return (
+  if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
       <div className="spinner" />
     </div>

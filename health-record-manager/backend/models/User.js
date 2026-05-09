@@ -32,22 +32,16 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    // authProvider: 'local' | 'google'
-    authProvider: {
-      type: String,
-      enum: ['local', 'google'],
-      default: 'local',
-    },
     // Google OAuth sub ID for deduplication
     googleId: {
       type: String,
       default: null,
     },
-    // Active profile persisted in DB (also cached in localStorage on frontend)
-    activeProfileId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'FamilyProfile',
-      default: null,
+    // authProvider: 'local' | 'google'
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
     },
     isActive: {
       type: Boolean,

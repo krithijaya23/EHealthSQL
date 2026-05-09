@@ -1,6 +1,5 @@
 const AccessControl = require('../models/AccessControl');
 const User = require('../models/User');
-const FamilyProfile = require('../models/FamilyProfile');
 const MedicalRecord = require('../models/MedicalRecord');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
@@ -204,52 +203,27 @@ const getSharedProfileRecords = async (req, res, next) => {
 };
 
 // ─── GET /api/access/managed-account/:ownerUserId ────────────────────────────
-// Get all profiles + records of the owner account (any access type)
 const getManagedAccount = async (req, res, next) => {
   try {
     const { ownerUserId } = req.params;
 
-    // Verify the logged-in user has any active grant from this owner
     const access = await AccessControl.findOne({
       ownerUserId,
-      $or: [
-        { targetEmail: req.user.email },
-        { targetUserId: req.user._id },
-      ],
+      $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
       status: 'active',
       expiryDate: { $gt: new Date() },
     });
 
-    if (!access) {
-      return errorResponse(res, 403, 'Access denied or expired');
-    }
+    if (!access) return errorResponse(res, 403, 'Access denied or expired');
 
-    // Get the owner's user info
     const owner = await User.findById(ownerUserId).select('fullName email profilePhoto');
     if (!owner) return errorResponse(res, 404, 'Account not found');
 
-    // Get all active profiles of the owner
-    const profiles = await FamilyProfile.find({ ownerUserId, isActive: true });
-
-    // Get all records for all profiles
-    const profileIds = profiles.map((p) => p._id);
-    const records = await MedicalRecord.find({
-      profileId: { $in: profileIds },
-      isDeleted: false,
-    }).sort({ visitDate: -1 });
-
-    // Group records by profileId
-    const recordsByProfile = {};
-    records.forEach((r) => {
-      const key = r.profileId.toString();
-      if (!recordsByProfile[key]) recordsByProfile[key] = [];
-      recordsByProfile[key].push(r);
-    });
+    const records = await MedicalRecord.find({ ownerUserId, isDeleted: false }).sort({ visitDate: -1 });
 
     return successResponse(res, 200, 'Account data fetched', {
       owner,
-      profiles,
-      recordsByProfile,
+      records,
       accessType: access.accessType,
       expiryDate: access.expiryDate,
     });

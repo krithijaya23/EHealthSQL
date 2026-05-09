@@ -7,7 +7,6 @@ import {
   Calendar, Pill, FileSearch, RefreshCw, FlaskConical, Scan,
   ClipboardList, Receipt, Syringe, Activity
 } from 'lucide-react';
-import { useProfile } from '../context/ProfileContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import './UploadRecord.css';
@@ -302,34 +301,26 @@ const DynamicForm = ({ recordType, form, setForm }) => {
 };
 
 // ─── Empty form state per type ────────────────────────────────────────────────
-const emptyForm = (profileId, type = 'Prescription') => ({
-  profileId: profileId || '',
+const emptyForm = (type = 'Prescription') => ({
   recordType: type,
   visitDate: new Date().toISOString().split('T')[0],
-  // Common
   doctorName: '', hospitalName: '', diagnosis: '', notes: '',
-  // Prescription
   medicines: [],
-  // Lab
   labName: '', patientName: '', labTests: [], impression: '',
-  // Scan
   scanType: '', bodyPart: '', findings: '',
-  // Discharge
   admissionDate: '', dischargeDate: '', treatmentSummary: '', dischargeAdvice: '', conditionAtDischarge: '',
-  // Bill
   billNumber: '', totalAmount: '', lineItems: [],
 });
 
 // ─── Main UploadRecord component ─────────────────────────────────────────────
 const UploadRecord = () => {
-  const { activeProfile } = useProfile();
   const navigate = useNavigate();
 
   const [phase, setPhase] = useState('idle');
   const [file, setFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
   const [ocrResult, setOcrResult] = useState(null);
-  const [form, setForm] = useState(emptyForm(activeProfile?._id));
+  const [form, setForm] = useState(emptyForm());
 
   // ── Dropzone ────────────────────────────────────────────────────────────────
   const onDrop = useCallback((accepted, rejected) => {
@@ -357,7 +348,6 @@ const UploadRecord = () => {
   // ── Phase 1: OCR Extract ────────────────────────────────────────────────────
   const handleExtract = async () => {
     if (!file) { toast.error('Please select a file first'); return; }
-    if (!form.profileId) { toast.error('Profile not found. Please refresh the page.'); return; }
     setPhase('extracting');
     try {
       const fd = new FormData();
@@ -414,7 +404,6 @@ const UploadRecord = () => {
   // ── Phase 2: Save ───────────────────────────────────────────────────────────
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.profileId) { toast.error('Profile not found. Please refresh the page.'); return; }
     setPhase('saving');
     try {
       const fd = new FormData();
@@ -438,7 +427,7 @@ const UploadRecord = () => {
   const resetAll = () => {
     setFile(null); setFilePreview(null); setOcrResult(null);
     setPhase('idle');
-    setForm(emptyForm(activeProfile?._id));
+    setForm(emptyForm());
   };
 
   const isExtracting = phase === 'extracting';
@@ -586,7 +575,7 @@ const UploadRecord = () => {
 
             <div className="upload-form-actions">
               <button type="button" className="btn btn-ghost" onClick={() => navigate('/history')}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={isSaving || !form.profileId}
+              <button type="submit" className="btn btn-primary" disabled={isSaving}
                 style={{ background: activeType.color }}>
                 {isSaving ? <><Loader size={15} className="spin-icon" /> Saving...</> : <><Save size={15} /> Save {activeType.label}</>}
               </button>

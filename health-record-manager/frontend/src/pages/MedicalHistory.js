@@ -5,7 +5,6 @@ import {
   ChevronRight, Upload, FlaskConical, Scan, ClipboardList,
   Receipt, Syringe, Pill, Activity, X
 } from 'lucide-react';
-import { useProfile } from '../context/ProfileContext';
 import api from '../services/api';
 import { format } from 'date-fns';
 import './MedicalHistory.css';
@@ -169,7 +168,6 @@ const RecordCard = ({ record, onClick }) => {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 const MedicalHistory = () => {
-  const { activeProfile } = useProfile();
   const navigate = useNavigate();
 
   const [records, setRecords] = useState([]);
@@ -179,13 +177,11 @@ const MedicalHistory = () => {
   const [showFilters, setShowFilters] = useState(false);
 
   const fetchRecords = useCallback(async (page = 1) => {
-    if (!activeProfile) return;
     setLoading(true);
     try {
       const params = { page, limit: 10, ...filters };
-      // Remove empty params
       Object.keys(params).forEach((k) => !params[k] && delete params[k]);
-      const { data } = await api.get(`/records/${activeProfile._id}`, { params });
+      const { data } = await api.get('/records', { params });
       setRecords(data.records);
       setPagination(data.pagination);
     } catch {
@@ -193,7 +189,7 @@ const MedicalHistory = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeProfile, filters]);
+  }, [filters]);
 
   useEffect(() => { fetchRecords(1); }, [fetchRecords]);
 
@@ -294,11 +290,9 @@ const MedicalHistory = () => {
             <FileText size={48} />
             <h3>No records found</h3>
             <p>Upload your first medical record to get started</p>
-            {activeProfile && (
-              <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => navigate('/upload')}>
-                <Upload size={15} /> Upload Record
-              </button>
-            )}
+            <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => navigate('/upload')}>
+              <Upload size={15} /> Upload Record
+            </button>
           </div>
         )}
       </div>

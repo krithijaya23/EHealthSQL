@@ -7,7 +7,6 @@ const fs = require('fs');
 require('dotenv').config();
 
 const authRoutes = require('./routes/authRoutes');
-const profileRoutes = require('./routes/profileRoutes');
 const recordRoutes = require('./routes/recordRoutes');
 const accessRoutes = require('./routes/accessRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
@@ -72,7 +71,6 @@ app.use((req, res, next) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/profiles', profileRoutes);
 app.use('/api/records', recordRoutes);
 app.use('/api/access', accessRoutes);
 app.use('/api/analytics', analyticsRoutes);
