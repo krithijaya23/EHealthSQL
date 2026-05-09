@@ -83,7 +83,7 @@ const emptyForm = () => ({
   location: '',
 });
 
-// ─── Reminder Form Modal ──────────────────────────────────────────────────────
+// ─── Reminder Form (inline card, no modal) ───────────────────────────────────
 const ReminderForm = ({ initial, onSave, onClose }) => {
   const [form, setForm] = useState(initial || emptyForm());
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -96,28 +96,45 @@ const ReminderForm = ({ initial, onSave, onClose }) => {
   };
 
   const cfg = TYPES[form.type];
+  const Icon = cfg.icon;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal card reminders-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <h2>{initial ? 'Edit Reminder' : 'New Reminder'}</h2>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}><X size={18} /></button>
+    <div className="reminder-form-card">
+      {/* Header */}
+      <div className="reminder-form-header">
+        <div className="reminder-form-header__left">
+          <div className="reminder-form-header__icon"
+            style={{ background: cfg.bg, color: cfg.color }}>
+            <Icon size={20} />
+          </div>
+          <div>
+            <h2>{initial ? 'Edit Reminder' : 'New Reminder'}</h2>
+            <p>{initial ? 'Update the details below' : 'Fill in the details to set a reminder'}</p>
+          </div>
         </div>
+        <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
+          <X size={18} />
+        </button>
+      </div>
 
-        <form onSubmit={handleSubmit} className="modal__body">
-          {/* Type selector */}
-          <div className="form-group">
-            <label className="form-label">Type</label>
-            <div className="reminder-type-grid">
+      <form onSubmit={handleSubmit}>
+        <div className="reminder-form-body">
+
+          {/* ── Type ── */}
+          <div>
+            <p className="reminder-form-section-title">
+              <Bell size={12} /> Reminder Type
+            </p>
+            <div className="reminder-type-grid" style={{ marginTop: 10 }}>
               {Object.entries(TYPES).map(([key, t]) => {
-                const Icon = t.icon;
+                const TIcon = t.icon;
+                const active = form.type === key;
                 return (
                   <button key={key} type="button"
-                    className={`reminder-type-btn ${form.type === key ? 'reminder-type-btn--active' : ''}`}
-                    style={form.type === key ? { borderColor: t.color, background: t.bg, color: t.color } : {}}
+                    className={`reminder-type-btn ${active ? 'reminder-type-btn--active' : ''}`}
+                    style={active ? { borderColor: t.color, background: t.bg, color: t.color } : {}}
                     onClick={() => set('type', key)}>
-                    <Icon size={15} />
+                    <TIcon size={18} />
                     <span>{t.label}</span>
                   </button>
                 );
@@ -125,83 +142,119 @@ const ReminderForm = ({ initial, onSave, onClose }) => {
             </div>
           </div>
 
-          {/* Title */}
-          <div className="form-group">
-            <label className="form-label">
-              {form.type === 'medicine' ? 'Medicine Name *' : form.type === 'appointment' ? 'Appointment Title *' : 'Title *'}
-            </label>
-            <input className="form-input" required
-              placeholder={form.type === 'medicine' ? 'e.g. Metformin 500mg' : form.type === 'appointment' ? 'e.g. Cardiology Checkup' : 'Reminder title'}
-              value={form.title} onChange={(e) => set('title', e.target.value)} />
+          {/* ── Details ── */}
+          <div className="reminder-form-section">
+            <p className="reminder-form-section-title">Details</p>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">
+                {form.type === 'medicine' ? 'Medicine Name *'
+                  : form.type === 'appointment' ? 'Appointment Title *'
+                  : form.type === 'test' ? 'Test Name *'
+                  : 'Title *'}
+              </label>
+              <input className="form-input" required
+                placeholder={
+                  form.type === 'medicine' ? 'e.g. Metformin 500mg'
+                  : form.type === 'appointment' ? 'e.g. Cardiology Checkup'
+                  : form.type === 'test' ? 'e.g. Blood Test (CBC)'
+                  : 'Reminder title'
+                }
+                value={form.title}
+                onChange={(e) => set('title', e.target.value)} />
+            </div>
+
+            {form.type === 'medicine' && (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Dosage / Instructions</label>
+                <input className="form-input"
+                  placeholder="e.g. 1 tablet after food"
+                  value={form.dosage}
+                  onChange={(e) => set('dosage', e.target.value)} />
+              </div>
+            )}
+
+            {(form.type === 'appointment' || form.type === 'test') && (
+              <div className="grid-2">
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">
+                    {form.type === 'test' ? 'Lab / Diagnostic Centre' : 'Doctor'}
+                  </label>
+                  <input className="form-input"
+                    placeholder={form.type === 'test' ? 'City Diagnostics' : 'Dr. Smith'}
+                    value={form.doctor}
+                    onChange={(e) => set('doctor', e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">Location</label>
+                  <input className="form-input"
+                    placeholder="Hospital / Clinic"
+                    value={form.location}
+                    onChange={(e) => set('location', e.target.value)} />
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Type-specific fields */}
-          {form.type === 'medicine' && (
-            <div className="form-group">
-              <label className="form-label">Dosage / Instructions</label>
-              <input className="form-input" placeholder="e.g. 1 tablet after food"
-                value={form.dosage} onChange={(e) => set('dosage', e.target.value)} />
-            </div>
-          )}
-          {(form.type === 'appointment' || form.type === 'test') && (
+          {/* ── Schedule ── */}
+          <div className="reminder-form-section">
+            <p className="reminder-form-section-title">
+              <Clock size={12} /> Schedule
+            </p>
             <div className="grid-2">
-              <div className="form-group">
-                <label className="form-label">Doctor / Lab</label>
-                <input className="form-input" placeholder="Dr. Smith / City Lab"
-                  value={form.doctor} onChange={(e) => set('doctor', e.target.value)} />
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Date *</label>
+                <input type="date" className="form-input" required
+                  value={form.date}
+                  onChange={(e) => set('date', e.target.value)} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Location</label>
-                <input className="form-input" placeholder="Hospital / Clinic name"
-                  value={form.location} onChange={(e) => set('location', e.target.value)} />
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Time</label>
+                <input type="time" className="form-input"
+                  value={form.time}
+                  onChange={(e) => set('time', e.target.value)} />
               </div>
             </div>
-          )}
 
-          {/* Date & Time */}
-          <div className="grid-2">
-            <div className="form-group">
-              <label className="form-label">Date *</label>
-              <input type="date" className="form-input" required
-                value={form.date} onChange={(e) => set('date', e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Time</label>
-              <input type="time" className="form-input"
-                value={form.time} onChange={(e) => set('time', e.target.value)} />
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Repeat size={12} /> Repeat
+              </label>
+              <div className="reminder-repeat-row">
+                {REPEAT_OPTIONS.map((o) => (
+                  <button key={o.value} type="button"
+                    className={`duration-btn ${form.repeat === o.value ? 'duration-btn--active' : ''}`}
+                    onClick={() => set('repeat', o.value)}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Repeat */}
-          <div className="form-group">
-            <label className="form-label"><Repeat size={13} /> Repeat</label>
-            <div className="reminder-repeat-row">
-              {REPEAT_OPTIONS.map((o) => (
-                <button key={o.value} type="button"
-                  className={`duration-btn ${form.repeat === o.value ? 'duration-btn--active' : ''}`}
-                  onClick={() => set('repeat', o.value)}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div className="form-group">
-            <label className="form-label">Notes</label>
+          {/* ── Notes ── */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Notes <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></label>
             <textarea className="form-input" rows={2}
-              placeholder="Additional notes..."
-              value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+              placeholder="Any additional notes..."
+              value={form.notes}
+              onChange={(e) => set('notes', e.target.value)} />
           </div>
 
-          <div className="modal__footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" style={{ background: cfg.color }}>
-              <Save size={15} /> {initial ? 'Update' : 'Add Reminder'}
-            </button>
-          </div>
-        </form>
-      </div>
+        </div>
+
+        {/* Footer */}
+        <div className="reminder-form-footer">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary"
+            style={{ background: cfg.color, minWidth: 140 }}>
+            <Save size={15} />
+            {initial ? 'Update Reminder' : 'Add Reminder'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
