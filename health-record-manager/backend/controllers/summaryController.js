@@ -26,7 +26,7 @@ const getHealthSummary = async (req, res, next) => {
     }
 
     const records = await MedicalRecord.find({ ownerUserId: targetOwner, isDeleted: false }).sort({ visitDate: -1 });
-    const summary = generateHealthSummary(records);
+    const summary = await generateHealthSummary(records);
     return successResponse(res, 200, 'Health summary generated', { summary });
   } catch (error) {
     next(error);
@@ -49,7 +49,7 @@ const getSharedSummary = async (req, res, next) => {
     if (!access) return errorResponse(res, 403, 'Access denied');
 
     const records = await MedicalRecord.find({ ownerUserId, isDeleted: false }).sort({ visitDate: -1 });
-    const summary = generateHealthSummary(records);
+    const summary = await generateHealthSummary(records);
 
     return successResponse(res, 200, 'Shared health summary generated', { summary });
   } catch (error) {

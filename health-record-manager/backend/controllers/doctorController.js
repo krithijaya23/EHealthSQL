@@ -52,7 +52,7 @@ const getPatientTimeline = async (req, res, next) => {
 
     const profile = await FamilyProfile.findById(profileId);
     const records = await MedicalRecord.find({ profileId, isDeleted: false }).sort({ visitDate: -1 });
-    const summary = generateHealthSummary(records);
+    const summary = await generateHealthSummary(records);
 
     return successResponse(res, 200, 'Patient timeline fetched', {
       profile,

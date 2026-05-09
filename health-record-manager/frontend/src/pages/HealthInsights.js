@@ -3,7 +3,7 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { TrendingUp, Activity, Sparkles, Brain, AlertCircle, User, Stethoscope } from 'lucide-react';
+import { TrendingUp, Activity, AlertCircle, User, Stethoscope, Brain } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import './HealthInsights.css';
@@ -28,7 +28,6 @@ const HealthInsights = () => {
   const [analytics, setAnalytics] = useState(null);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [summaryTab, setSummaryTab] = useState('patient');
 
   useEffect(() => {
     const fetch = async () => {
@@ -68,7 +67,7 @@ const HealthInsights = () => {
         <InsightCard icon={Activity} title="Total Visits" value={analytics?.totalRecords || 0} color="#2563eb" sub="All time" />
         <InsightCard icon={TrendingUp} title="This Year" value={analytics?.monthlyVisits?.reduce((a, b) => a + b.count, 0) || 0} color="#7c3aed" sub="Records" />
         <InsightCard icon={AlertCircle} title="Diagnoses" value={analytics?.diagnosisDistribution?.length || 0} color="#f59e0b" sub="Unique" />
-        <InsightCard icon={Sparkles} title="AI Insights" value={summary?.insights?.length || 0} color="#059669" sub="Generated" />
+        <InsightCard icon={Brain} title="AI Insights" value={summary?.insights?.length || 0} color="#059669" sub="Generated" />
       </div>
 
       <div className="insights-grid">
@@ -144,96 +143,105 @@ const HealthInsights = () => {
           ) : <div className="insights-empty">No data</div>}
         </div>
 
-        {/* AI Summary panel — Patient + Doctor tabs */}
+        {/* AI Summary panel — redesigned */}
         {summary && (
-          <div className="card insights-ai-card insights-chart-card--wide">
-            <div className="insights-ai-header">
-              <div className="insights-ai-icon">
-                <Brain size={22} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <h3 className="insights-chart-title" style={{ marginBottom: 2 }}>AI Health Summary</h3>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Generated from {summary.totalVisits} medical records</p>
-              </div>
-              {/* Tab switcher */}
-              <div className="insights-ai-tabs">
-                <button
-                  className={`insights-ai-tab ${summaryTab === 'patient' ? 'insights-ai-tab--active' : ''}`}
-                  onClick={() => setSummaryTab('patient')}
-                >
-                  <User size={14} /> Patient View
-                </button>
-                <button
-                  className={`insights-ai-tab ${summaryTab === 'doctor' ? 'insights-ai-tab--active' : ''}`}
-                  onClick={() => setSummaryTab('doctor')}
-                >
-                  <Stethoscope size={14} /> Doctor View
-                </button>
-              </div>
-            </div>
+          <div className="insights-ai-card insights-chart-card--wide">
 
-            {/* Patient-friendly summary */}
-            {summaryTab === 'patient' && (
-              <div className="insights-ai-summary-box insights-ai-summary-box--patient">
-                <div className="insights-ai-summary-label">
-                  <User size={14} /> Easy-to-understand summary
+            {/* Patient Summary */}
+            <div className="card insights-summary-card">
+              <div className="insights-summary-header">
+                <div className="insights-summary-icon" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                  <User size={20} />
                 </div>
-                <p className="insights-ai-summary-text">{summary.patientSummary}</p>
-              </div>
-            )}
-
-            {/* Doctor / clinical summary */}
-            {summaryTab === 'doctor' && (
-              <div className="insights-ai-summary-box insights-ai-summary-box--doctor">
-                <div className="insights-ai-summary-label">
-                  <Stethoscope size={14} /> Clinical summary
+                <div>
+                  <h3 className="insights-summary-title">Patient Summary</h3>
+                  <p className="insights-summary-sub">Easy-to-understand overview of your health history</p>
                 </div>
-                <p className="insights-ai-summary-text">{summary.doctorSummary}</p>
+                <span className="badge badge-blue" style={{ fontSize: 11, flexShrink: 0 }}>
+                  {summary.totalVisits} records
+                </span>
               </div>
-            )}
-
-            <div className="insights-ai-grid" style={{ marginTop: 20 }}>
-              {summary.insights?.map((insight, i) => (
-                <div key={i} className="insights-ai-insight">
-                  <Sparkles size={14} />
-                  <span>{insight}</span>
-                </div>
-              ))}
-            </div>
-
-            {summary.frequentDiagnoses?.length > 0 && (
-              <div className="insights-ai-section">
-                <p className="insights-ai-section-title">Frequent Diagnoses</p>
-                <div className="insights-ai-tags">
-                  {summary.frequentDiagnoses.map((d) => (
-                    <span key={d.name} className="badge badge-blue">{d.name} ({d.count}×)</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {summary.currentMedications?.length > 0 && (
-              <div className="insights-ai-section">
-                <p className="insights-ai-section-title">Common Medications</p>
-                <div className="insights-ai-tags">
-                  {summary.currentMedications.slice(0, 6).map((m) => (
-                    <span key={m.name} className="badge badge-purple">{m.name}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {summary.recentTrends?.length > 0 && (
-              <div className="insights-ai-section">
-                <p className="insights-ai-section-title">Health Trends</p>
-                {summary.recentTrends.map((t, i) => (
-                  <div key={i} className="insights-ai-trend">
-                    <TrendingUp size={14} />
-                    <span>{t}</span>
-                  </div>
+              <div className="insights-summary-body">
+                {summary.patientSummary.split('\n\n').map((para, i) => (
+                  <p key={i} className="insights-summary-para">{para}</p>
                 ))}
               </div>
-            )}
+            </div>
+
+            {/* Doctor Summary */}
+            <div className="card insights-summary-card insights-summary-card--clinical">
+              <div className="insights-summary-header">
+                <div className="insights-summary-icon" style={{ background: '#faf5ff', color: '#7c3aed' }}>
+                  <Stethoscope size={20} />
+                </div>
+                <div>
+                  <h3 className="insights-summary-title">Clinical Summary</h3>
+                  <p className="insights-summary-sub">Medical review for healthcare professionals</p>
+                </div>
+                <span className="badge" style={{ background: '#faf5ff', color: '#7c3aed', fontSize: 11, flexShrink: 0 }}>
+                  Clinical
+                </span>
+              </div>
+              <div className="insights-summary-body">
+                {summary.doctorSummary.split('\n\n').map((para, i) => {
+                  // Render bullet lists properly
+                  if (para.includes('\n•')) {
+                    const [heading, ...items] = para.split('\n');
+                    return (
+                      <div key={i} className="insights-summary-section">
+                        {heading && <p className="insights-summary-para">{heading}</p>}
+                        <ul className="insights-summary-list">
+                          {items.map((item, j) => (
+                            <li key={j}>{item.replace(/^•\s*/, '')}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  }
+                  return <p key={i} className="insights-summary-para">{para}</p>;
+                })}
+              </div>
+            </div>
+
+            {/* Key highlights row */}
+            <div className="insights-highlights-row">
+              {summary.frequentDiagnoses?.length > 0 && (
+                <div className="card insights-highlight-card">
+                  <p className="insights-highlight-title">Frequent Diagnoses</p>
+                  <div className="insights-highlight-tags">
+                    {summary.frequentDiagnoses.map((d) => (
+                      <span key={d.name} className="badge badge-blue" style={{ fontSize: 11 }}>
+                        {d.name} <span style={{ opacity: .7 }}>×{d.count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {summary.currentMedications?.length > 0 && (
+                <div className="card insights-highlight-card">
+                  <p className="insights-highlight-title">Common Medications</p>
+                  <div className="insights-highlight-tags">
+                    {summary.currentMedications.slice(0, 6).map((m) => (
+                      <span key={m.name} className="badge badge-purple" style={{ fontSize: 11 }}>{m.name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {summary.recentTrends?.length > 0 && (
+                <div className="card insights-highlight-card">
+                  <p className="insights-highlight-title">Health Trends</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {summary.recentTrends.map((t, i) => (
+                      <div key={i} className="insights-ai-trend">
+                        <TrendingUp size={13} />
+                        <span style={{ fontSize: 13 }}>{t}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
         )}
       </div>
