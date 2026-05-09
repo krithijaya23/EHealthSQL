@@ -65,62 +65,13 @@ const extractTextFromImageBuffer = async (buffer) => {
   });
 };
 
-// ─── PDF: render each page to an image using sharp, then OCR ─────────────────
-// This handles truly scanned PDFs where no text layer exists.
-// sharp uses libvips which supports PDF rendering via poppler on Linux (Render).
+// ─── PDF: render pages to images using pdfjs-dist, then OCR each page ────────
+// For scanned PDFs (no text layer), we use pdfjs to extract any embedded text,
+// then fall back to Google Vision's native PDF support or Tesseract on the buffer.
 const extractTextFromScannedPDF = async (buffer) => {
-  console.log('🔄 PDF has no text layer — rendering pages to images for OCR...');
+  console.log('🔄 PDF has no text layer — trying alternative extraction methods...');
 
-  // ── Method 1: sharp PDF page rendering ──────────────────────────────────────
-  // sharp can render individual PDF pages to PNG by using the `page` option.
-  // This works on Render (Linux with libvips+poppler) but may not work on Windows.
-  try {
-    // First get page count
-    const metadata = await sharp(buffer, { density: 300 }).metadata();
-    const pageCount = metadata.pages || 1;
-    console.log(`📄 PDF has ${pageCount} page(s) — rendering each at 300 DPI`);
-
-    const pageTexts = [];
-    const maxPages = Math.min(pageCount, 8); // cap at 8 pages
-
-    for (let page = 0; page < maxPages; page++) {
-      try {
-        // Render this page to a high-res PNG
-        const pageBuffer = await sharp(buffer, { density: 300, page })
-          .grayscale()
-          .normalize()
-          .sharpen({ sigma: 1.5, m1: 1.0, m2: 0.5 })
-          .linear(1.2, -20)
-          .threshold(140)
-          .png()
-          .toBuffer();
-
-        console.log(`🖼️  Page ${page + 1}/${maxPages} rendered (${pageBuffer.length} bytes) — running OCR`);
-
-        // Run OCR on this page image
-        const pageText = await extractTextFromImageBuffer(pageBuffer);
-        if (pageText && pageText.trim().length > 5) {
-          pageTexts.push(pageText.trim());
-          console.log(`✅ Page ${page + 1}: extracted ${pageText.length} chars`);
-        } else {
-          console.warn(`⚠️  Page ${page + 1}: no text extracted`);
-        }
-      } catch (pageErr) {
-        console.warn(`⚠️  Page ${page + 1} render failed:`, pageErr.message);
-      }
-    }
-
-    const combined = pageTexts.join('\n\n').trim();
-    if (combined.length > 20) {
-      console.log(`✅ Sharp PDF rendering: extracted ${combined.length} chars across ${pageTexts.length} page(s)`);
-      return combined;
-    }
-    console.warn('⚠️  Sharp PDF rendering yielded no text');
-  } catch (err) {
-    console.warn('⚠️  Sharp PDF rendering failed (may not have poppler):', err.message);
-  }
-
-  // ── Method 2: pdfjs-dist text content (handles more encoding variants) ──────
+  // Method 1: pdfjs-dist text content extraction (handles more PDF variants than pdf-parse)
   try {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
     const loadingTask = pdfjsLib.getDocument({
@@ -130,7 +81,7 @@ const extractTextFromScannedPDF = async (buffer) => {
     });
     const pdfDoc = await loadingTask.promise;
     const numPages = Math.min(pdfDoc.numPages, 10);
-    console.log(`📄 pdfjs: trying ${numPages} page(s)...`);
+    console.log(`📄 pdfjs: ${pdfDoc.numPages} page(s), processing up to ${numPages}`);
 
     const pageTexts = [];
     for (let i = 1; i <= numPages; i++) {
@@ -155,7 +106,8 @@ const extractTextFromScannedPDF = async (buffer) => {
     console.warn('⚠️  pdfjs extraction failed:', err.message);
   }
 
-  // ── Method 3: Google Vision documentTextDetection on raw PDF bytes ───────────
+  // Method 2: Google Vision native PDF/TIFF support (documentTextDetection)
+  // Vision can process PDF bytes directly and extract text from scanned pages
   if (visionClient) {
     try {
       console.log('🔄 Sending scanned PDF to Google Vision documentTextDetection...');
@@ -173,7 +125,8 @@ const extractTextFromScannedPDF = async (buffer) => {
     }
   }
 
-  // ── Method 4: Tesseract directly on the PDF file ─────────────────────────────
+  // Method 3: Tesseract directly on the PDF buffer as a last resort
+  // Tesseract can sometimes handle single-page PDFs
   try {
     console.log('🔄 Trying Tesseract directly on PDF buffer...');
     return await withTempFile(buffer, '.pdf', async (tmpPath) => {
@@ -184,15 +137,13 @@ const extractTextFromScannedPDF = async (buffer) => {
           }
         },
       });
-      const text = result.data.text || '';
-      console.log('\n✅ Tesseract PDF extracted', text.length, 'chars');
-      return text;
+      console.log('\n✅ Tesseract PDF extracted', result.data.text.length, 'chars');
+      return result.data.text;
     });
   } catch (err) {
     console.warn('⚠️  Tesseract PDF failed:', err.message);
   }
 
-  console.warn('⚠️  All PDF extraction methods exhausted');
   return '';
 };
 
@@ -202,7 +153,7 @@ const extractTextFromPDFBuffer = async (buffer) => {
   try {
     const data = await pdfParse(buffer);
     const text = (data.text || '').trim();
-    if (text.length > 20) {
+    if (text.length > 30) {
       console.log(`✅ PDF text layer extracted: ${text.length} chars`);
       return text;
     }
@@ -211,7 +162,7 @@ const extractTextFromPDFBuffer = async (buffer) => {
     console.warn('⚠️  pdf-parse failed:', err.message, '— trying image OCR');
   }
 
-  // Step 2: Scanned PDF fallback chain (sharp → pdfjs → Vision → Tesseract)
+  // Step 2: Scanned PDF fallback chain
   return extractTextFromScannedPDF(buffer);
 };
 
