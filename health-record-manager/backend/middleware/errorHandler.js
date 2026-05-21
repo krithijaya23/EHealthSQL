@@ -1,26 +1,26 @@
 const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || 500;
-  let message = err.message || 'Internal Server Error';
+  let message    = err.message    || 'Internal Server Error';
 
-  // Mongoose bad ObjectId
-  if (err.name === 'CastError') {
+  // MySQL duplicate entry (e.g. unique email)
+  if (err.code === 'ER_DUP_ENTRY') {
     statusCode = 400;
-    message = 'Invalid resource ID';
-  }
-
-  // Mongoose duplicate key
-  if (err.code === 11000) {
-    statusCode = 400;
-    const field = Object.keys(err.keyValue)[0];
+    // Extract the duplicate field name from the MySQL error message
+    const match = err.message.match(/for key '(.+?)'/);
+    const field = match ? match[1].replace(/.*\./, '') : 'field';
     message = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`;
   }
 
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
+  // MySQL data too long
+  if (err.code === 'ER_DATA_TOO_LONG') {
     statusCode = 400;
-    message = Object.values(err.errors)
-      .map((val) => val.message)
-      .join(', ');
+    message = 'Input value is too long for one of the fields';
+  }
+
+  // MySQL bad enum value
+  if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'WARN_DATA_TRUNCATED') {
+    statusCode = 400;
+    message = 'Invalid value provided for one of the fields';
   }
 
   // JWT errors

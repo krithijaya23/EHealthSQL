@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { callProcedure } = require('../config/db');
 
 const protect = async (req, res, next) => {
   let token;
@@ -14,15 +14,30 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
 
-    if (!req.user) {
+    // CALL GetUserById(id)
+    const results = await callProcedure('GetUserById', [decoded.id]);
+    const user = results[0]?.[0];
+
+    if (!user) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    if (!req.user.isActive) {
+    if (!user.is_active) {
       return res.status(401).json({ success: false, message: 'Account is deactivated' });
     }
+
+    // Normalise field names to match what controllers expect
+    req.user = {
+      _id:          user.id,
+      id:           user.id,
+      fullName:     user.full_name,
+      email:        user.email,
+      role:         user.role,
+      profilePhoto: user.profile_photo,
+      authProvider: user.auth_provider,
+      isActive:     user.is_active,
+    };
 
     next();
   } catch (error) {

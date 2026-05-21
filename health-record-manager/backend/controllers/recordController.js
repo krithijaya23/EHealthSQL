@@ -1,55 +1,103 @@
-const MedicalRecord = require('../models/MedicalRecord');
-const AccessControl = require('../models/AccessControl');
-const { runOCR } = require('../services/ocrService');
+const { callProcedure } = require('../config/db');
+const { runOCR }        = require('../services/ocrService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
 const parseJSON = (str, fallback = []) => {
   if (!str) return fallback;
+  if (Array.isArray(str)) return str;
   try { return JSON.parse(str); } catch { return fallback; }
 };
 
-// ─── Helper: resolve which userId to use as the record owner ─────────────────
-// If the request includes a valid `ownerUserId` (shared account context),
-// verify the logged-in user has active access to that account, then use it.
-// Otherwise fall back to the logged-in user's own ID.
-const resolveOwner = async (req) => {
-  const requestedOwner = req.body.ownerUserId || req.query.ownerUserId;
+// Convert a DB row (snake_case) to the camelCase shape the frontend expects
+const normaliseRecord = (row) => {
+  if (!row) return null;
+  return {
+    _id:                  row.id,
+    id:                   row.id,
+    ownerUserId:          row.owner_user_id,
+    uploadedByUserId:     row.uploaded_by_user_id,
+    recordType:           row.record_type,
+    doctorName:           row.doctor_name,
+    hospitalName:         row.hospital_name,
+    diagnosis:            row.diagnosis,
+    notes:                row.notes,
+    visitDate:            row.visit_date,
+    labName:              row.lab_name,
+    patientName:          row.patient_name,
+    impression:           row.impression,
+    scanType:             row.scan_type,
+    bodyPart:             row.body_part,
+    findings:             row.findings,
+    admissionDate:        row.admission_date,
+    dischargeDate:        row.discharge_date,
+    treatmentSummary:     row.treatment_summary,
+    dischargeAdvice:      row.discharge_advice,
+    conditionAtDischarge: row.condition_at_discharge,
+    billNumber:           row.bill_number,
+    totalAmount:          row.total_amount,
+    extractedText:        row.extracted_text,
+    ocrProcessed:         !!row.ocr_processed,
+    ocrConfidence:        row.ocr_confidence,
+    aiPatientSummary:     row.ai_patient_summary,
+    aiDoctorSummary:      row.ai_doctor_summary,
+    isDeleted:            !!row.is_deleted,
+    createdAt:            row.created_at,
+    updatedAt:            row.updated_at,
+    medicines:  safeParseJson(row.medicines_json,  []),
+    labTests:   safeParseJson(row.lab_tests_json,  []),
+    lineItems:  safeParseJson(row.bill_items_json, []),
+  };
+};
 
-  if (!requestedOwner || requestedOwner === req.user._id.toString()) {
-    return { ownerUserId: req.user._id, uploadedByUserId: null };
-  }
-
-  // Verify active access grant
-  const access = await AccessControl.findOne({
-    ownerUserId: requestedOwner,
-    $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-    status: 'active',
-    expiryDate: { $gt: new Date() },
-    accessType: { $in: ['upload', 'manage'] },
-  });
-
-  if (!access) {
-    return null; // no permission
-  }
-
-  return { ownerUserId: requestedOwner, uploadedByUserId: req.user._id };
+const safeParseJson = (val, fallback) => {
+  if (!val) return fallback;
+  if (Array.isArray(val)) return val;
+  try { return JSON.parse(val); } catch { return fallback; }
 };
 
 // ─── Helper: check read/write access to a record ─────────────────────────────
-// Returns true if the user owns the record OR has an active grant from the owner
 const canAccessRecord = async (record, userId, userEmail, requireWrite = false) => {
-  if (record.ownerUserId.toString() === userId.toString()) return true;
+  if (record.ownerUserId === userId || record.owner_user_id === userId) return true;
 
-  const query = {
-    ownerUserId: record.ownerUserId,
-    $or: [{ targetEmail: userEmail }, { targetUserId: userId }],
-    status: 'active',
-    expiryDate: { $gt: new Date() },
-  };
-  if (requireWrite) query.accessType = { $in: ['upload', 'manage'] };
+  const ownerId = record.ownerUserId || record.owner_user_id;
+  const proc    = requireWrite ? 'CheckUploadAccess' : 'CheckAccountAccess';
+  const results = await callProcedure(proc, [ownerId, userEmail, userId]);
+  return !!results[0]?.[0];
+};
 
-  const access = await AccessControl.findOne(query);
-  return !!access;
+// ─── Helper: resolve owner for upload (shared account context) ───────────────
+const resolveOwner = async (req) => {
+  const requestedOwner = req.body.ownerUserId || req.query.ownerUserId;
+
+  if (!requestedOwner || parseInt(requestedOwner) === req.user._id) {
+    return { ownerUserId: req.user._id, uploadedByUserId: null };
+  }
+
+  const results = await callProcedure('CheckUploadAccess', [
+    requestedOwner, req.user.email, req.user._id,
+  ]);
+  if (!results[0]?.[0]) return null;
+
+  return { ownerUserId: parseInt(requestedOwner), uploadedByUserId: req.user._id };
+};
+
+// ─── Helper: insert child rows (medicines, labTests, lineItems) ───────────────
+const insertChildRows = async (recordId, medicines, labTests, lineItems) => {
+  for (const m of (medicines || [])) {
+    await callProcedure('AddRecordMedicine', [
+      recordId, m.name || '', m.dosage || '', m.frequency || '', m.duration || '',
+    ]);
+  }
+  for (const t of (labTests || [])) {
+    await callProcedure('AddRecordLabTest', [
+      recordId, t.testName || '', t.value || '', t.unit || '', t.normalRange || '', t.status || 'normal',
+    ]);
+  }
+  for (const item of (lineItems || [])) {
+    await callProcedure('AddRecordBillItem', [
+      recordId, item.description || '', item.amount || '',
+    ]);
+  }
 };
 
 // ─── POST /api/records/ocr-extract ───────────────────────────────────────────
@@ -102,7 +150,6 @@ const ocrExtract = async (req, res, next) => {
 // ─── POST /api/records/upload ─────────────────────────────────────────────────
 const uploadRecord = async (req, res, next) => {
   try {
-    // Resolve owner — supports shared account context
     const ownership = await resolveOwner(req);
     if (!ownership) {
       return errorResponse(res, 403, 'You do not have upload access to this account');
@@ -121,35 +168,48 @@ const uploadRecord = async (req, res, next) => {
     }
 
     const b = req.body;
-    const record = await MedicalRecord.create({
+    const medicines = parseJSON(b.medicines).length > 0 ? parseJSON(b.medicines) : (ocrData.medicines || []);
+    const labTests  = parseJSON(b.labTests).length  > 0 ? parseJSON(b.labTests)  : (ocrData.labTests  || []);
+    const lineItems = parseJSON(b.lineItems).length > 0 ? parseJSON(b.lineItems) : (ocrData.lineItems || []);
+
+    const visitDate = b.visitDate || ocrData.visitDate || new Date().toISOString().split('T')[0];
+
+    // CALL CreateMedicalRecord(...)
+    const result = await callProcedure('CreateMedicalRecord', [
       ownerUserId,
-      uploadedByUserId,
-      recordType:           recordType || ocrData.documentType || 'Other',
-      doctorName:           b.doctorName || ocrData.doctorName || '',
-      hospitalName:         b.hospitalName || ocrData.hospitalName || '',
-      diagnosis:            b.diagnosis || ocrData.diagnosis || '',
-      notes:                b.notes || ocrData.notes || '',
-      visitDate:            b.visitDate || ocrData.visitDate || new Date(),
-      medicines:            parseJSON(b.medicines).length > 0 ? parseJSON(b.medicines) : (ocrData.medicines || []),
-      labName:              b.labName || ocrData.labName || '',
-      patientName:          b.patientName || ocrData.patientName || '',
-      labTests:             parseJSON(b.labTests).length > 0 ? parseJSON(b.labTests) : (ocrData.labTests || []),
-      impression:           b.impression || ocrData.impression || '',
-      scanType:             b.scanType || ocrData.scanType || '',
-      bodyPart:             b.bodyPart || ocrData.bodyPart || '',
-      findings:             b.findings || ocrData.findings || '',
-      admissionDate:        b.admissionDate || ocrData.admissionDate || '',
-      dischargeDate:        b.dischargeDate || ocrData.dischargeDate || '',
-      treatmentSummary:     b.treatmentSummary || ocrData.treatmentSummary || '',
-      dischargeAdvice:      b.dischargeAdvice || ocrData.dischargeAdvice || '',
-      conditionAtDischarge: b.conditionAtDischarge || ocrData.conditionAtDischarge || '',
-      billNumber:           b.billNumber || ocrData.billNumber || '',
-      totalAmount:          b.totalAmount || ocrData.totalAmount || '',
-      lineItems:            parseJSON(b.lineItems).length > 0 ? parseJSON(b.lineItems) : (ocrData.lineItems || []),
-      extractedText:        extractedText || ocrData.extractedText || '',
-      ocrProcessed:         !!(extractedText || ocrData.extractedText),
-      ocrConfidence:        ocrData.ocrConfidence || '',
-    });
+      uploadedByUserId || 0,
+      recordType || ocrData.documentType || 'Other',
+      b.doctorName           || ocrData.doctorName           || '',
+      b.hospitalName         || ocrData.hospitalName         || '',
+      b.diagnosis            || ocrData.diagnosis            || '',
+      b.notes                || ocrData.notes                || '',
+      visitDate,
+      b.labName              || ocrData.labName              || '',
+      b.patientName          || ocrData.patientName          || '',
+      b.impression           || ocrData.impression           || '',
+      b.scanType             || ocrData.scanType             || '',
+      b.bodyPart             || ocrData.bodyPart             || '',
+      b.findings             || ocrData.findings             || '',
+      b.admissionDate        || ocrData.admissionDate        || '',
+      b.dischargeDate        || ocrData.dischargeDate        || '',
+      b.treatmentSummary     || ocrData.treatmentSummary     || '',
+      b.dischargeAdvice      || ocrData.dischargeAdvice      || '',
+      b.conditionAtDischarge || ocrData.conditionAtDischarge || '',
+      b.billNumber           || ocrData.billNumber           || '',
+      b.totalAmount          || ocrData.totalAmount          || '',
+      extractedText          || ocrData.extractedText        || '',
+      !!(extractedText || ocrData.extractedText) ? 1 : 0,
+      ocrData.ocrConfidence  || '',
+    ]);
+
+    const newId = result[0]?.[0]?.id;
+
+    // Insert child rows
+    await insertChildRows(newId, medicines, labTests, lineItems);
+
+    // Fetch the full record to return
+    const recordResult = await callProcedure('GetRecordById', [newId]);
+    const record = normaliseRecord(recordResult[0]?.[0]);
 
     return successResponse(res, 201, 'Record saved successfully', { record });
   } catch (error) {
@@ -158,52 +218,47 @@ const uploadRecord = async (req, res, next) => {
 };
 
 // ─── GET /api/records ─────────────────────────────────────────────────────────
-// Supports ?ownerUserId= for shared account context
 const getRecords = async (req, res, next) => {
   try {
     const requestedOwner = req.query.ownerUserId;
     let targetOwner = req.user._id;
 
-    if (requestedOwner && requestedOwner !== req.user._id.toString()) {
-      const access = await AccessControl.findOne({
-        ownerUserId: requestedOwner,
-        $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-        status: 'active',
-        expiryDate: { $gt: new Date() },
-      });
-      if (!access) return errorResponse(res, 403, 'Access denied to this account');
-      targetOwner = requestedOwner;
+    if (requestedOwner && parseInt(requestedOwner) !== req.user._id) {
+      const access = await callProcedure('CheckAccountAccess', [
+        requestedOwner, req.user.email, req.user._id,
+      ]);
+      if (!access[0]?.[0]) return errorResponse(res, 403, 'Access denied to this account');
+      targetOwner = parseInt(requestedOwner);
     }
 
     const { search, doctor, hospital, diagnosis, recordType, startDate, endDate, page = 1, limit = 10 } = req.query;
-    const query = { ownerUserId: targetOwner, isDeleted: false };
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    if (search) {
-      query.$or = [
-        { doctorName:          { $regex: search, $options: 'i' } },
-        { hospitalName:        { $regex: search, $options: 'i' } },
-        { diagnosis:           { $regex: search, $options: 'i' } },
-        { 'medicines.name':    { $regex: search, $options: 'i' } },
-        { 'labTests.testName': { $regex: search, $options: 'i' } },
-      ];
-    }
-    if (doctor)     query.doctorName   = { $regex: doctor,   $options: 'i' };
-    if (hospital)   query.hospitalName = { $regex: hospital, $options: 'i' };
-    if (diagnosis)  query.diagnosis    = { $regex: diagnosis, $options: 'i' };
-    if (recordType) query.recordType   = recordType;
-    if (startDate || endDate) {
-      query.visitDate = {};
-      if (startDate) query.visitDate.$gte = new Date(startDate);
-      if (endDate)   query.visitDate.$lte = new Date(endDate);
-    }
+    // CALL GetRecords(ownerUserId, search, doctor, hospital, diagnosis, recordType, startDate, endDate, limit, offset)
+    const results = await callProcedure('GetRecords', [
+      targetOwner,
+      search    || null,
+      doctor    || null,
+      hospital  || null,
+      diagnosis || null,
+      recordType || null,
+      startDate  || null,
+      endDate    || null,
+      parseInt(limit),
+      offset,
+    ]);
 
-    const skip  = (parseInt(page) - 1) * parseInt(limit);
-    const total = await MedicalRecord.countDocuments(query);
-    const records = await MedicalRecord.find(query).sort({ visitDate: -1 }).skip(skip).limit(parseInt(limit));
+    const records = (results[0] || []).map(normaliseRecord);
+    const total   = results[1]?.[0]?.total || 0;
 
     return successResponse(res, 200, 'Records fetched', {
       records,
-      pagination: { total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)), limit: parseInt(limit) },
+      pagination: {
+        total,
+        page:  parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit),
+      },
     });
   } catch (error) { next(error); }
 };
@@ -211,24 +266,28 @@ const getRecords = async (req, res, next) => {
 // ─── GET /api/records/detail/:id ─────────────────────────────────────────────
 const getRecord = async (req, res, next) => {
   try {
-    const record = await MedicalRecord.findOne({ _id: req.params.id, isDeleted: false });
-    if (!record) return errorResponse(res, 404, 'Record not found');
+    const results = await callProcedure('GetRecordById', [req.params.id]);
+    const row     = results[0]?.[0];
+    if (!row) return errorResponse(res, 404, 'Record not found');
 
-    const hasAccess = await canAccessRecord(record, req.user._id, req.user.email);
+    const hasAccess = await canAccessRecord(row, req.user._id, req.user.email);
     if (!hasAccess) return errorResponse(res, 403, 'Access denied');
 
-    return successResponse(res, 200, 'Record fetched', { record });
+    return successResponse(res, 200, 'Record fetched', { record: normaliseRecord(row) });
   } catch (error) { next(error); }
 };
 
 // ─── GET /api/records/detail/:id/download ────────────────────────────────────
 const downloadRecord = async (req, res, next) => {
   try {
-    const record = await MedicalRecord.findOne({ _id: req.params.id, isDeleted: false });
-    if (!record) return errorResponse(res, 404, 'Record not found');
+    const results = await callProcedure('GetRecordById', [req.params.id]);
+    const row     = results[0]?.[0];
+    if (!row) return errorResponse(res, 404, 'Record not found');
 
-    const hasAccess = await canAccessRecord(record, req.user._id, req.user.email);
+    const hasAccess = await canAccessRecord(row, req.user._id, req.user.email);
     if (!hasAccess) return errorResponse(res, 403, 'Access denied');
+
+    const record = normaliseRecord(row);
 
     const lines = [];
     const add = (label, value) => { if (value) lines.push(`${label}: ${value}`); };
@@ -313,7 +372,7 @@ const downloadRecord = async (req, res, next) => {
     lines.push('END OF RECORD');
 
     const content  = lines.join('\n');
-    const filename = `record-${record.recordType.replace(/\s+/g, '-').toLowerCase()}-${new Date(record.visitDate).toISOString().split('T')[0]}.txt`;
+    const filename = `record-${(record.recordType || 'record').replace(/\s+/g, '-').toLowerCase()}-${new Date(record.visitDate).toISOString().split('T')[0]}.txt`;
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -326,45 +385,80 @@ const downloadRecord = async (req, res, next) => {
 // ─── PUT /api/records/:id ─────────────────────────────────────────────────────
 const updateRecord = async (req, res, next) => {
   try {
-    const record = await MedicalRecord.findOne({ _id: req.params.id, isDeleted: false });
-    if (!record) return errorResponse(res, 404, 'Record not found');
+    const results = await callProcedure('GetRecordById', [req.params.id]);
+    const row     = results[0]?.[0];
+    if (!row) return errorResponse(res, 404, 'Record not found');
 
-    const hasAccess = await canAccessRecord(record, req.user._id, req.user.email, true);
+    const hasAccess = await canAccessRecord(row, req.user._id, req.user.email, true);
     if (!hasAccess) return errorResponse(res, 403, 'Access denied');
 
     const b = req.body;
-    const updates = {
-      recordType: b.recordType, doctorName: b.doctorName, hospitalName: b.hospitalName,
-      diagnosis: b.diagnosis, notes: b.notes, visitDate: b.visitDate,
-      medicines:            parseJSON(b.medicines),
-      labName: b.labName, patientName: b.patientName,
-      labTests:             parseJSON(b.labTests),
-      impression: b.impression, scanType: b.scanType, bodyPart: b.bodyPart, findings: b.findings,
-      admissionDate: b.admissionDate, dischargeDate: b.dischargeDate,
-      treatmentSummary: b.treatmentSummary, dischargeAdvice: b.dischargeAdvice,
-      conditionAtDischarge: b.conditionAtDischarge,
-      billNumber: b.billNumber, totalAmount: b.totalAmount,
-      lineItems:            parseJSON(b.lineItems),
-    };
-    Object.keys(updates).forEach((k) => updates[k] === undefined && delete updates[k]);
 
-    const updated = await MedicalRecord.findByIdAndUpdate(
-      req.params.id, updates, { new: true, runValidators: true }
-    );
-    return successResponse(res, 200, 'Record updated', { record: updated });
+    // CALL UpdateMedicalRecord(...)
+    await callProcedure('UpdateMedicalRecord', [
+      req.params.id,
+      b.recordType           || null,
+      b.doctorName           || null,
+      b.hospitalName         || null,
+      b.diagnosis            || null,
+      b.notes                || null,
+      b.visitDate            || null,
+      b.labName              || null,
+      b.patientName          || null,
+      b.impression           || null,
+      b.scanType             || null,
+      b.bodyPart             || null,
+      b.findings             || null,
+      b.admissionDate        || null,
+      b.dischargeDate        || null,
+      b.treatmentSummary     || null,
+      b.dischargeAdvice      || null,
+      b.conditionAtDischarge || null,
+      b.billNumber           || null,
+      b.totalAmount          || null,
+    ]);
+
+    // Replace child rows
+    const medicines = parseJSON(b.medicines);
+    const labTests  = parseJSON(b.labTests);
+    const lineItems = parseJSON(b.lineItems);
+
+    if (medicines.length > 0) {
+      await callProcedure('DeleteRecordMedicines', [req.params.id]);
+      for (const m of medicines) {
+        await callProcedure('AddRecordMedicine', [req.params.id, m.name || '', m.dosage || '', m.frequency || '', m.duration || '']);
+      }
+    }
+    if (labTests.length > 0) {
+      await callProcedure('DeleteRecordLabTests', [req.params.id]);
+      for (const t of labTests) {
+        await callProcedure('AddRecordLabTest', [req.params.id, t.testName || '', t.value || '', t.unit || '', t.normalRange || '', t.status || 'normal']);
+      }
+    }
+    if (lineItems.length > 0) {
+      await callProcedure('DeleteRecordBillItems', [req.params.id]);
+      for (const item of lineItems) {
+        await callProcedure('AddRecordBillItem', [req.params.id, item.description || '', item.amount || '']);
+      }
+    }
+
+    const updated = await callProcedure('GetRecordById', [req.params.id]);
+    return successResponse(res, 200, 'Record updated', { record: normaliseRecord(updated[0]?.[0]) });
   } catch (error) { next(error); }
 };
 
 // ─── DELETE /api/records/:id ──────────────────────────────────────────────────
 const deleteRecord = async (req, res, next) => {
   try {
-    const record = await MedicalRecord.findOne({ _id: req.params.id, isDeleted: false });
-    if (!record) return errorResponse(res, 404, 'Record not found');
+    const results = await callProcedure('GetRecordById', [req.params.id]);
+    const row     = results[0]?.[0];
+    if (!row) return errorResponse(res, 404, 'Record not found');
 
-    const hasAccess = await canAccessRecord(record, req.user._id, req.user.email, true);
+    const hasAccess = await canAccessRecord(row, req.user._id, req.user.email, true);
     if (!hasAccess) return errorResponse(res, 403, 'Access denied');
 
-    await MedicalRecord.findByIdAndUpdate(req.params.id, { isDeleted: true });
+    // CALL DeleteMedicalRecord(id)
+    await callProcedure('DeleteMedicalRecord', [req.params.id]);
     return successResponse(res, 200, 'Record deleted successfully');
   } catch (error) { next(error); }
 };

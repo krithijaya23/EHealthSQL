@@ -1,27 +1,45 @@
-const MedicalRecord = require('../models/MedicalRecord');
-const AccessControl = require('../models/AccessControl');
+const { callProcedure } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 const { getMonthlyVisits } = require('../services/aiSummaryService');
 
+// Helper: parse JSON arrays stored in DB rows
+const safeJson = (val, fallback = []) => {
+  if (!val) return fallback;
+  if (Array.isArray(val)) return val;
+  try { return JSON.parse(val); } catch { return fallback; }
+};
+
+// Convert DB row to the shape aiSummaryService expects
+const rowToRecord = (row) => ({
+  _id:          row.id,
+  visitDate:    row.visit_date,
+  recordType:   row.record_type,
+  doctorName:   row.doctor_name,
+  hospitalName: row.hospital_name,
+  diagnosis:    row.diagnosis,
+  medicines:    safeJson(row.medicines_json,  []),
+  labTests:     safeJson(row.lab_tests_json,  []),
+  notes:        row.notes,
+  impression:   row.impression,
+});
+
 // ─── GET /api/analytics ───────────────────────────────────────────────────────
-// Per-user analytics — supports ?ownerUserId= for shared account context
 const getAnalytics = async (req, res, next) => {
   try {
     const requestedOwner = req.query.ownerUserId;
     let targetOwner = req.user._id;
 
-    if (requestedOwner && requestedOwner !== req.user._id.toString()) {
-      const access = await AccessControl.findOne({
-        ownerUserId: requestedOwner,
-        $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-        status: 'active',
-        expiryDate: { $gt: new Date() },
-      });
-      if (!access) return successResponse(res, 403, 'Access denied');
-      targetOwner = requestedOwner;
+    if (requestedOwner && parseInt(requestedOwner) !== req.user._id) {
+      const access = await callProcedure('CheckAccountAccess', [
+        requestedOwner, req.user.email, req.user._id,
+      ]);
+      if (!access[0]?.[0]) return successResponse(res, 403, 'Access denied');
+      targetOwner = parseInt(requestedOwner);
     }
 
-    const records = await MedicalRecord.find({ ownerUserId: targetOwner, isDeleted: false }).sort({ visitDate: -1 });
+    // CALL GetAllRecordsForAnalytics(ownerUserId)
+    const results = await callProcedure('GetAllRecordsForAnalytics', [targetOwner]);
+    const records = (results[0] || []).map(rowToRecord);
 
     if (!records.length) {
       return successResponse(res, 200, 'No records found', {
@@ -68,8 +86,12 @@ const getAnalytics = async (req, res, next) => {
     const recordTypeDistribution = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
 
     const recentActivity = records.slice(0, 5).map((r) => ({
-      _id: r._id, doctorName: r.doctorName, hospitalName: r.hospitalName,
-      diagnosis: r.diagnosis, visitDate: r.visitDate, recordType: r.recordType,
+      _id:          r._id,
+      doctorName:   r.doctorName,
+      hospitalName: r.hospitalName,
+      diagnosis:    r.diagnosis,
+      visitDate:    r.visitDate,
+      recordType:   r.recordType,
     }));
 
     return successResponse(res, 200, 'Analytics fetched', {
@@ -83,32 +105,29 @@ const getAnalytics = async (req, res, next) => {
 // ─── GET /api/analytics/dashboard ────────────────────────────────────────────
 const getDashboardStats = async (req, res, next) => {
   try {
-    const totalRecords = await MedicalRecord.countDocuments({
-      ownerUserId: req.user._id,
-      isDeleted: false,
-    });
+    // CALL CountRecords(ownerUserId)
+    const totalResult = await callProcedure('CountRecords', [req.user._id]);
+    const totalRecords = totalResult[0]?.[0]?.total || 0;
 
-    const recentRecords = await MedicalRecord.find({
-      ownerUserId: req.user._id,
-      isDeleted: false,
-    }).sort({ createdAt: -1 }).limit(5);
+    // CALL GetRecentRecords(ownerUserId, limit)
+    const recentResult = await callProcedure('GetRecentRecords', [req.user._id, 5]);
+    const recentRecords = (recentResult[0] || []).map((row) => ({
+      _id:          row.id,
+      recordType:   row.record_type,
+      doctorName:   row.doctor_name,
+      hospitalName: row.hospital_name,
+      diagnosis:    row.diagnosis,
+      visitDate:    row.visit_date,
+      createdAt:    row.created_at,
+    }));
 
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
+    // CALL CountRecordsThisMonth(ownerUserId)
+    const monthResult = await callProcedure('CountRecordsThisMonth', [req.user._id]);
+    const recordsThisMonth = monthResult[0]?.[0]?.total || 0;
 
-    const recordsThisMonth = await MedicalRecord.countDocuments({
-      ownerUserId: req.user._id,
-      isDeleted: false,
-      createdAt: { $gte: startOfMonth },
-    });
-
-    // Count active access grants shared by this user
-    const sharedCount = await AccessControl.countDocuments({
-      ownerUserId: req.user._id,
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    });
+    // CALL CountActiveGrants(ownerUserId)
+    const sharedResult = await callProcedure('CountActiveGrants', [req.user._id]);
+    const sharedCount = sharedResult[0]?.[0]?.total || 0;
 
     return successResponse(res, 200, 'Dashboard stats fetched', {
       stats: { totalRecords, recordsThisMonth, sharedCount, recentRecords },

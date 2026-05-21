@@ -1,20 +1,38 @@
-const AccessControl = require('../models/AccessControl');
-const User = require('../models/User');
-const MedicalRecord = require('../models/MedicalRecord');
+const { callProcedure } = require('../config/db');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
-// ─── Helper: auto-expire stale records ───────────────────────────────────────
-const autoExpire = async (list) => {
-  const now = new Date();
-  const stale = list.filter((a) => a.status === 'active' && a.expiryDate < now);
-  await Promise.all(stale.map((a) => {
-    a.status = 'expired';
-    return a.save();
-  }));
-};
+// Convert DB row to camelCase shape
+const normaliseAccess = (row) => ({
+  _id:          row.id,
+  id:           row.id,
+  ownerUserId:  row.owner_user_id,
+  targetEmail:  row.target_email,
+  targetUserId: row.target_user_id,
+  profileId:    row.profile_id,
+  accessType:   row.access_type,
+  expiryDate:   row.expiry_date,
+  status:       row.status,
+  sharedBy:     row.shared_by,
+  createdAt:    row.created_at,
+  updatedAt:    row.updated_at,
+  // Populated target user fields (from JOIN in stored procedure)
+  targetUser: row.target_full_name ? {
+    _id:          row.target_user_id,
+    fullName:     row.target_full_name,
+    email:        row.target_email_user || row.target_email,
+    profilePhoto: row.target_profile_photo,
+    role:         row.target_role,
+  } : null,
+  // Populated owner fields (for shared-with-me)
+  ownerUser: row.owner_full_name ? {
+    _id:          row.owner_user_id,
+    fullName:     row.owner_full_name,
+    email:        row.owner_email,
+    profilePhoto: row.owner_profile_photo,
+  } : null,
+});
 
 // ─── GET /api/access/lookup-user ──────────────────────────────────────────────
-// Check if a user with the given email exists in the DB
 const lookupUser = async (req, res, next) => {
   try {
     const { email } = req.query;
@@ -24,14 +42,21 @@ const lookupUser = async (req, res, next) => {
       return errorResponse(res, 400, 'Cannot share access with yourself');
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('fullName email profilePhoto');
+    const results = await callProcedure('GetUserByEmail', [email]);
+    const user    = results[0]?.[0];
+
     if (!user) {
       return successResponse(res, 200, 'User not found', { found: false });
     }
 
     return successResponse(res, 200, 'User found', {
       found: true,
-      user: { _id: user._id, fullName: user.fullName, email: user.email, profilePhoto: user.profilePhoto },
+      user: {
+        _id:          user.id,
+        fullName:     user.full_name,
+        email:        user.email,
+        profilePhoto: user.profile_photo,
+      },
     });
   } catch (error) {
     next(error);
@@ -47,13 +72,13 @@ const shareAccess = async (req, res, next) => {
       return errorResponse(res, 400, 'Target email is required');
     }
 
-    // Cannot share with yourself
     if (targetEmail.toLowerCase() === req.user.email.toLowerCase()) {
       return errorResponse(res, 400, 'Cannot share access with yourself');
     }
 
-    // Target user MUST exist in the DB
-    const targetUser = await User.findOne({ email: targetEmail.toLowerCase() });
+    // Target user must exist
+    const userResult = await callProcedure('GetUserByEmail', [targetEmail]);
+    const targetUser = userResult[0]?.[0];
     if (!targetUser) {
       return errorResponse(res, 404, 'No account found with this email. The person must sign up first.');
     }
@@ -72,55 +97,54 @@ const shareAccess = async (req, res, next) => {
       return errorResponse(res, 400, 'Expiry date must be in the future');
     }
 
-    // Upsert: update existing active grant or create new one (account-level, no profileId)
-    const existing = await AccessControl.findOne({
-      ownerUserId: req.user._id,
-      targetUserId: targetUser._id,
-      profileId: null,
-      status: 'active',
-    });
+    const expiryStr = expiryDate.toISOString().slice(0, 19).replace('T', ' ');
 
-    let access;
+    // Check for existing active account-level grant
+    const existingResult = await callProcedure('FindActiveAccountGrant', [
+      req.user._id, targetUser.id,
+    ]);
+    const existing = existingResult[0]?.[0];
+
+    let accessId;
     if (existing) {
-      existing.accessType = accessType || 'view';
-      existing.expiryDate = expiryDate;
-      existing.targetEmail = targetEmail.toLowerCase();
-      await existing.save();
-      access = existing;
+      // CALL UpdateAccessGrant(id, accessType, expiryDate, targetEmail)
+      await callProcedure('UpdateAccessGrant', [
+        existing.id, accessType || 'view', expiryStr, targetEmail.toLowerCase(),
+      ]);
+      accessId = existing.id;
     } else {
-      access = await AccessControl.create({
-        ownerUserId: req.user._id,
-        targetEmail: targetEmail.toLowerCase(),
-        targetUserId: targetUser._id,
-        profileId: null,
-        accessType: accessType || 'view',
-        expiryDate,
-        sharedBy: req.user.fullName,
-        status: 'active',
-      });
+      // CALL CreateAccessGrant(ownerUserId, targetEmail, targetUserId, profileId, accessType, expiryDate, sharedBy)
+      const createResult = await callProcedure('CreateAccessGrant', [
+        req.user._id,
+        targetEmail.toLowerCase(),
+        targetUser.id,
+        0, // null profile_id = account-level
+        accessType || 'view',
+        expiryStr,
+        req.user.fullName,
+      ]);
+      accessId = createResult[0]?.[0]?.id;
     }
 
-    const populated = await AccessControl.findById(access._id)
-      .populate('targetUserId', 'fullName email profilePhoto');
+    // Fetch the populated grant
+    const grantResult = await callProcedure('GetAccessGrantById', [accessId]);
+    const access = normaliseAccess(grantResult[0]?.[0]);
 
     return successResponse(res, existing ? 200 : 201,
       existing ? 'Access updated successfully' : 'Access shared successfully',
-      { access: populated }
+      { access }
     );
   } catch (error) {
     next(error);
   }
 };
 
-// ─── DELETE /api/access/revoke/:id ───────────────────────────────────────────
+// ─── DELETE /api/access/revoke/:id ───────────────────────────────────────��───
 const revokeAccess = async (req, res, next) => {
   try {
-    const access = await AccessControl.findOneAndUpdate(
-      { _id: req.params.id, ownerUserId: req.user._id },
-      { status: 'revoked' },
-      { new: true }
-    );
-    if (!access) return errorResponse(res, 404, 'Access record not found');
+    // CALL RevokeAccessGrant(id, ownerUserId)
+    const result = await callProcedure('RevokeAccessGrant', [req.params.id, req.user._id]);
+    if (!result[0]?.[0]?.affected) return errorResponse(res, 404, 'Access record not found');
     return successResponse(res, 200, 'Access revoked successfully');
   } catch (error) {
     next(error);
@@ -130,17 +154,14 @@ const revokeAccess = async (req, res, next) => {
 // ─── GET /api/access/granted ──────────────────────────────────────────────────
 const getGrantedAccess = async (req, res, next) => {
   try {
-    const accessList = await AccessControl.find({ ownerUserId: req.user._id })
-      .populate('targetUserId', 'fullName email profilePhoto role')
-      .sort({ createdAt: -1 });
+    // Expire stale grants first
+    await callProcedure('ExpireStaleGrants', []);
 
-    await autoExpire(accessList);
+    // CALL GetGrantedAccess(ownerUserId)
+    const results = await callProcedure('GetGrantedAccess', [req.user._id]);
+    const accessList = (results[0] || []).map(normaliseAccess);
 
-    const fresh = await AccessControl.find({ ownerUserId: req.user._id })
-      .populate('targetUserId', 'fullName email profilePhoto role')
-      .sort({ createdAt: -1 });
-
-    return successResponse(res, 200, 'Access list fetched', { accessList: fresh });
+    return successResponse(res, 200, 'Access list fetched', { accessList });
   } catch (error) {
     next(error);
   }
@@ -149,16 +170,9 @@ const getGrantedAccess = async (req, res, next) => {
 // ─── GET /api/access/shared-with-me ──────────────────────────────────────────
 const getSharedWithMe = async (req, res, next) => {
   try {
-    const accessList = await AccessControl.find({
-      $or: [
-        { targetEmail: req.user.email },
-        { targetUserId: req.user._id },
-      ],
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    })
-      .populate('ownerUserId', 'fullName email profilePhoto')
-      .sort({ createdAt: -1 });
+    // CALL GetSharedWithMe(targetEmail, targetUserId)
+    const results = await callProcedure('GetSharedWithMe', [req.user.email, req.user._id]);
+    const accessList = (results[0] || []).map(normaliseAccess);
 
     return successResponse(res, 200, 'Shared profiles fetched', { accessList });
   } catch (error) {
@@ -171,31 +185,19 @@ const getSharedProfileRecords = async (req, res, next) => {
   try {
     const { profileId } = req.params;
 
-    const access = await AccessControl.findOne({
-      $or: [
-        { targetEmail: req.user.email },
-        { targetUserId: req.user._id },
-      ],
-      profileId,
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    });
+    // Check access to this profile
+    const accessResult = await callProcedure('CheckAccountAccess', [
+      profileId, req.user.email, req.user._id,
+    ]);
+    const access = accessResult[0]?.[0];
 
     if (!access) {
       return errorResponse(res, 403, 'Access denied or expired for this profile');
     }
 
-    const profile = await FamilyProfile.findById(profileId);
-    if (!profile) return errorResponse(res, 404, 'Profile not found');
-
-    const records = await MedicalRecord.find({ profileId, isDeleted: false })
-      .sort({ visitDate: -1 });
-
     return successResponse(res, 200, 'Shared profile records fetched', {
-      profile,
-      records,
-      accessType: access.accessType,
-      expiryDate: access.expiryDate,
+      accessType:  access.access_type,
+      expiryDate:  access.expiry_date,
     });
   } catch (error) {
     next(error);
@@ -207,25 +209,45 @@ const getManagedAccount = async (req, res, next) => {
   try {
     const { ownerUserId } = req.params;
 
-    const access = await AccessControl.findOne({
-      ownerUserId,
-      $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    });
+    // CALL CheckAccountAccess(ownerUserId, email, userId)
+    const accessResult = await callProcedure('CheckAccountAccess', [
+      ownerUserId, req.user.email, req.user._id,
+    ]);
+    const access = accessResult[0]?.[0];
 
     if (!access) return errorResponse(res, 403, 'Access denied or expired');
 
-    const owner = await User.findById(ownerUserId).select('fullName email profilePhoto');
+    // Get owner info
+    const ownerResult = await callProcedure('GetUserById', [ownerUserId]);
+    const owner = ownerResult[0]?.[0];
     if (!owner) return errorResponse(res, 404, 'Account not found');
 
-    const records = await MedicalRecord.find({ ownerUserId, isDeleted: false }).sort({ visitDate: -1 });
+    // Get all records for this owner
+    const recordsResult = await callProcedure('GetAllRecordsForAnalytics', [ownerUserId]);
+    const records = (recordsResult[0] || []).map((row) => {
+      const { callProcedure: _, ...rest } = row;
+      return {
+        _id:          row.id,
+        ownerUserId:  row.owner_user_id,
+        recordType:   row.record_type,
+        doctorName:   row.doctor_name,
+        hospitalName: row.hospital_name,
+        diagnosis:    row.diagnosis,
+        visitDate:    row.visit_date,
+        createdAt:    row.created_at,
+      };
+    });
 
     return successResponse(res, 200, 'Account data fetched', {
-      owner,
+      owner: {
+        _id:          owner.id,
+        fullName:     owner.full_name,
+        email:        owner.email,
+        profilePhoto: owner.profile_photo,
+      },
       records,
-      accessType: access.accessType,
-      expiryDate: access.expiryDate,
+      accessType:  access.access_type,
+      expiryDate:  access.expiry_date,
     });
   } catch (error) {
     next(error);
@@ -237,24 +259,19 @@ const checkAccess = async (req, res, next) => {
   try {
     const { profileId } = req.params;
 
-    const access = await AccessControl.findOne({
-      $or: [
-        { targetEmail: req.user.email },
-        { targetUserId: req.user._id },
-      ],
-      profileId,
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    });
+    const accessResult = await callProcedure('CheckAccountAccess', [
+      profileId, req.user.email, req.user._id,
+    ]);
+    const access = accessResult[0]?.[0];
 
     if (!access) {
       return successResponse(res, 200, 'No access', { hasAccess: false });
     }
 
     return successResponse(res, 200, 'Access found', {
-      hasAccess: true,
-      accessType: access.accessType,
-      expiryDate: access.expiryDate,
+      hasAccess:   true,
+      accessType:  access.access_type,
+      expiryDate:  access.expiry_date,
     });
   } catch (error) {
     next(error);
@@ -262,12 +279,6 @@ const checkAccess = async (req, res, next) => {
 };
 
 module.exports = {
-  lookupUser,
-  shareAccess,
-  revokeAccess,
-  getGrantedAccess,
-  getSharedWithMe,
-  getSharedProfileRecords,
-  getManagedAccount,
-  checkAccess,
+  lookupUser, shareAccess, revokeAccess, getGrantedAccess,
+  getSharedWithMe, getSharedProfileRecords, getManagedAccount, checkAccess,
 };

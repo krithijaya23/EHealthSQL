@@ -1,31 +1,46 @@
-const MedicalRecord = require('../models/MedicalRecord');
-const AccessControl = require('../models/AccessControl');
-const {
-  generateHealthSummary,
-  generatePatientSummary,
-  generateDoctorSummary,
-} = require('../services/aiSummaryService');
+const { callProcedure } = require('../config/db');
+const { generateHealthSummary } = require('../services/aiSummaryService');
 const { successResponse, errorResponse } = require('../utils/apiResponse');
 
+// Convert DB row to the shape aiSummaryService expects
+const rowToRecord = (row) => {
+  const safeJson = (val, fallback = []) => {
+    if (!val) return fallback;
+    if (Array.isArray(val)) return val;
+    try { return JSON.parse(val); } catch { return fallback; }
+  };
+  return {
+    _id:          row.id,
+    visitDate:    row.visit_date,
+    recordType:   row.record_type,
+    doctorName:   row.doctor_name,
+    hospitalName: row.hospital_name,
+    diagnosis:    row.diagnosis,
+    notes:        row.notes,
+    impression:   row.impression,
+    medicines:    safeJson(row.medicines_json,  []),
+    labTests:     safeJson(row.lab_tests_json,  []),
+  };
+};
+
 // ─── GET /api/summary ─────────────────────────────────────────────────────────
-// Supports ?ownerUserId= for shared account context
 const getHealthSummary = async (req, res, next) => {
   try {
     const requestedOwner = req.query.ownerUserId;
     let targetOwner = req.user._id;
 
-    if (requestedOwner && requestedOwner !== req.user._id.toString()) {
-      const access = await AccessControl.findOne({
-        ownerUserId: requestedOwner,
-        $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-        status: 'active',
-        expiryDate: { $gt: new Date() },
-      });
-      if (!access) return errorResponse(res, 403, 'Access denied');
-      targetOwner = requestedOwner;
+    if (requestedOwner && parseInt(requestedOwner) !== req.user._id) {
+      const access = await callProcedure('CheckAccountAccess', [
+        requestedOwner, req.user.email, req.user._id,
+      ]);
+      if (!access[0]?.[0]) return errorResponse(res, 403, 'Access denied');
+      targetOwner = parseInt(requestedOwner);
     }
 
-    const records = await MedicalRecord.find({ ownerUserId: targetOwner, isDeleted: false }).sort({ visitDate: -1 });
+    // CALL GetAllRecordsForAnalytics(ownerUserId)
+    const results = await callProcedure('GetAllRecordsForAnalytics', [targetOwner]);
+    const records = (results[0] || []).map(rowToRecord);
+
     const summary = await generateHealthSummary(records);
     return successResponse(res, 200, 'Health summary generated', { summary });
   } catch (error) {
@@ -34,23 +49,19 @@ const getHealthSummary = async (req, res, next) => {
 };
 
 // ─── GET /api/summary/shared/:ownerUserId ─────────────────────────────────────
-// Summary for a shared account (requires active access grant)
 const getSharedSummary = async (req, res, next) => {
   try {
     const { ownerUserId } = req.params;
 
-    const access = await AccessControl.findOne({
-      ownerUserId,
-      $or: [{ targetEmail: req.user.email }, { targetUserId: req.user._id }],
-      status: 'active',
-      expiryDate: { $gt: new Date() },
-    });
+    const access = await callProcedure('CheckAccountAccess', [
+      ownerUserId, req.user.email, req.user._id,
+    ]);
+    if (!access[0]?.[0]) return errorResponse(res, 403, 'Access denied');
 
-    if (!access) return errorResponse(res, 403, 'Access denied');
+    const results = await callProcedure('GetAllRecordsForAnalytics', [ownerUserId]);
+    const records = (results[0] || []).map(rowToRecord);
 
-    const records = await MedicalRecord.find({ ownerUserId, isDeleted: false }).sort({ visitDate: -1 });
     const summary = await generateHealthSummary(records);
-
     return successResponse(res, 200, 'Shared health summary generated', { summary });
   } catch (error) {
     next(error);
