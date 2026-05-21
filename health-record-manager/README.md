@@ -15,12 +15,12 @@ A full-stack healthcare web application for managing medical records with AI-pow
 
 ## Features
 
-- 🤖 **AI + OCR** — Auto-extract doctor name, diagnosis, medicines from uploaded prescriptions
-- 👨‍👩‍👧 **Family Profiles** — One account, multiple family member profiles
-- 📊 **Health Analytics** — Line, bar, and pie charts for visit trends
-- 🔐 **Secure Sharing** — Grant temporary access to doctors with expiry
-- 🌙 **Dark Mode** — Full light/dark theme support
-- 📱 **Responsive** — Works on all screen sizes
+- **AI + OCR** — Auto-extract doctor name, diagnosis, medicines from uploaded prescriptions
+- **Family Profiles** — One account, multiple family member profiles
+- **Health Analytics** — Line, bar, and pie charts for visit trends
+- **Secure Sharing** — Grant temporary access to doctors with expiry
+- **Dark Mode** — Full light/dark theme support
+- **Responsive** — Works on all screen sizes
 
 ## Quick Start
 
