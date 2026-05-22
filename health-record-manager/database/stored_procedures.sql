@@ -1,9 +1,11 @@
 -- ============================================================
 -- Health Record Manager — Stored Procedures
 -- Run AFTER schema.sql
+-- Optimized for MySQL Workbench Execution
 -- ============================================================
 
 USE health_record_manager;
+
 DELIMITER $$
 
 -- ════════════════════════════════════════════════════════════
@@ -398,7 +400,8 @@ CREATE PROCEDURE GetRecords(
   IN p_offset        INT
 )
 BEGIN
-  SELECT SQL_CALC_FOUND_ROWS
+  -- Select matching rows
+  SELECT 
     mr.*,
     (SELECT JSON_ARRAYAGG(JSON_OBJECT('name',rm.name,'dosage',rm.dosage,'frequency',rm.frequency,'duration',rm.duration))
      FROM record_medicines rm WHERE rm.record_id = mr.id) AS medicines_json,
@@ -423,7 +426,22 @@ BEGIN
   ORDER BY mr.visit_date DESC
   LIMIT p_limit OFFSET p_offset;
 
-  SELECT FOUND_ROWS() AS total;
+  -- Compliant counter dataset that mimics FOUND_ROWS() for backend matching expectations
+  SELECT COUNT(*) AS total 
+  FROM medical_records mr
+  WHERE mr.owner_user_id = p_owner_user_id
+    AND mr.is_deleted = 0
+    AND (p_search IS NULL OR p_search = '' OR (
+          mr.doctor_name   LIKE CONCAT('%', p_search, '%') OR
+          mr.hospital_name LIKE CONCAT('%', p_search, '%') OR
+          mr.diagnosis     LIKE CONCAT('%', p_search, '%')
+        ))
+    AND (p_doctor      IS NULL OR p_doctor      = '' OR mr.doctor_name   LIKE CONCAT('%', p_doctor,   '%'))
+    AND (p_hospital    IS NULL OR p_hospital    = '' OR mr.hospital_name LIKE CONCAT('%', p_hospital, '%'))
+    AND (p_diagnosis   IS NULL OR p_diagnosis   = '' OR mr.diagnosis     LIKE CONCAT('%', p_diagnosis,'%'))
+    AND (p_record_type IS NULL OR p_record_type = '' OR mr.record_type   = p_record_type)
+    AND (p_start_date  IS NULL OR mr.visit_date >= p_start_date)
+    AND (p_end_date    IS NULL OR mr.visit_date <= p_end_date);
 END$$
 
 -- Get a single record by ID (no owner filter — caller checks access)
@@ -482,8 +500,8 @@ BEGIN
     findings               = COALESCE(p_findings,                         findings),
     admission_date         = COALESCE(p_admission_date,                   admission_date),
     discharge_date         = COALESCE(p_discharge_date,                   discharge_date),
-    treatment_summary      = COALESCE(p_treatment_summary,                treatment_summary),
-    discharge_advice       = COALESCE(p_discharge_advice,                 discharge_advice),
+    treatment_summary      = COALESCE(p_treatment_summary,                  treatment_summary),
+    discharge_advice       = COALESCE(p_discharge_advice,                   discharge_advice),
     condition_at_discharge = COALESCE(p_condition_at_discharge,           condition_at_discharge),
     bill_number            = COALESCE(p_bill_number,                      bill_number),
     total_amount           = COALESCE(p_total_amount,                     total_amount),

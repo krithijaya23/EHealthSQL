@@ -1,6 +1,6 @@
 -- ============================================================
--- Health Record Manager — MySQL Schema
--- Run this file first to create all tables
+-- Health Record Manager — Complete MySQL Schema
+-- Optimized for Strict Mode & MySQL Workbench Execution
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS health_record_manager
@@ -8,6 +8,9 @@ CREATE DATABASE IF NOT EXISTS health_record_manager
   COLLATE utf8mb4_unicode_ci;
 
 USE health_record_manager;
+
+-- Temporarily bypass foreign key sorting blocks during creation phase
+SET FOREIGN_KEY_CHECKS = 0;
 
 -- ─────────────────────────────────────────────────────────────
 -- TABLE: users
@@ -58,7 +61,7 @@ CREATE TABLE IF NOT EXISTS family_profiles (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: profile_allergies  (replaces embedded array)
+-- TABLE: profile_allergies
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS profile_allergies (
   id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -71,7 +74,7 @@ CREATE TABLE IF NOT EXISTS profile_allergies (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: profile_chronic_conditions  (replaces embedded array)
+-- TABLE: profile_chronic_conditions
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS profile_chronic_conditions (
   id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -90,31 +93,30 @@ CREATE TABLE IF NOT EXISTS medical_records (
   id                    INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   owner_user_id         INT UNSIGNED NOT NULL,
   uploaded_by_user_id   INT UNSIGNED NULL,
-
   record_type           ENUM('Prescription','Lab Report','Scan','Discharge Summary','Medical Bill','Vaccination','Other') NOT NULL DEFAULT 'Other',
 
   -- Common fields
   doctor_name           VARCHAR(150) NOT NULL DEFAULT '',
   hospital_name         VARCHAR(200) NOT NULL DEFAULT '',
-  diagnosis             TEXT         NOT NULL DEFAULT '',
-  notes                 TEXT         NOT NULL DEFAULT '',
+  diagnosis             TEXT         NULL,  -- Fixed: Strict mode compliance
+  notes                 TEXT         NULL,  -- Fixed: Strict mode compliance
   visit_date            DATE         NOT NULL,
 
   -- Lab Report
   lab_name              VARCHAR(200) NOT NULL DEFAULT '',
   patient_name          VARCHAR(150) NOT NULL DEFAULT '',
-  impression            TEXT         NOT NULL DEFAULT '',
+  impression            TEXT         NULL,  -- Fixed: Strict mode compliance
 
   -- Scan
   scan_type             VARCHAR(100) NOT NULL DEFAULT '',
   body_part             VARCHAR(100) NOT NULL DEFAULT '',
-  findings              TEXT         NOT NULL DEFAULT '',
+  findings              TEXT         NULL,  -- Fixed: Strict mode compliance
 
   -- Discharge Summary
   admission_date        VARCHAR(50)  NOT NULL DEFAULT '',
   discharge_date        VARCHAR(50)  NOT NULL DEFAULT '',
-  treatment_summary     TEXT         NOT NULL DEFAULT '',
-  discharge_advice      TEXT         NOT NULL DEFAULT '',
+  treatment_summary     TEXT         NULL,  -- Fixed: Strict mode compliance
+  discharge_advice      TEXT         NULL,  -- Fixed: Strict mode compliance
   condition_at_discharge VARCHAR(200) NOT NULL DEFAULT '',
 
   -- Medical Bill
@@ -122,13 +124,13 @@ CREATE TABLE IF NOT EXISTS medical_records (
   total_amount          VARCHAR(50)  NOT NULL DEFAULT '',
 
   -- OCR metadata
-  extracted_text        LONGTEXT     NOT NULL DEFAULT '',
+  extracted_text        LONGTEXT     NULL,  -- Fixed: Strict mode compliance
   ocr_processed         TINYINT(1)   NOT NULL DEFAULT 0,
   ocr_confidence        ENUM('high','low','none','') NOT NULL DEFAULT '',
 
   -- AI summaries
-  ai_patient_summary    LONGTEXT     NOT NULL DEFAULT '',
-  ai_doctor_summary     LONGTEXT     NOT NULL DEFAULT '',
+  ai_patient_summary    LONGTEXT     NULL,  -- Fixed: Strict mode compliance
+  ai_doctor_summary     LONGTEXT     NULL,  -- Fixed: Strict mode compliance
 
   is_deleted            TINYINT(1)   NOT NULL DEFAULT 0,
   created_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -140,12 +142,12 @@ CREATE TABLE IF NOT EXISTS medical_records (
   INDEX idx_mr_owner_date   (owner_user_id, visit_date DESC),
   INDEX idx_mr_deleted      (is_deleted),
   INDEX idx_mr_record_type  (record_type),
-  FULLTEXT INDEX ft_mr_search (doctor_name, hospital_name, diagnosis)
+  FULLTEXT INDEX ft_mr_search (doctor_name, hospital_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: record_medicines  (replaces medicines[] sub-schema)
+-- TABLE: record_medicines
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS record_medicines (
   id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -161,7 +163,7 @@ CREATE TABLE IF NOT EXISTS record_medicines (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: record_lab_tests  (replaces labTests[] sub-schema)
+-- TABLE: record_lab_tests
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS record_lab_tests (
   id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -178,7 +180,7 @@ CREATE TABLE IF NOT EXISTS record_lab_tests (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: record_bill_items  (replaces lineItems[] sub-schema)
+-- TABLE: record_bill_items
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS record_bill_items (
   id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -192,7 +194,7 @@ CREATE TABLE IF NOT EXISTS record_bill_items (
 
 
 -- ─────────────────────────────────────────────────────────────
--- TABLE: record_tags  (replaces tags[] array)
+-- TABLE: record_tags
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS record_tags (
   id        INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -212,7 +214,7 @@ CREATE TABLE IF NOT EXISTS access_controls (
   owner_user_id   INT UNSIGNED NOT NULL,
   target_email    VARCHAR(255) NOT NULL,
   target_user_id  INT UNSIGNED NULL,
-  profile_id      INT UNSIGNED NULL,   -- NULL = account-level access
+  profile_id      INT UNSIGNED NULL,
   access_type     ENUM('view','upload','manage') NOT NULL DEFAULT 'view',
   expiry_date     DATETIME NOT NULL,
   status          ENUM('active','expired','revoked') NOT NULL DEFAULT 'active',
@@ -230,3 +232,9 @@ CREATE TABLE IF NOT EXISTS access_controls (
   INDEX idx_ac_status       (status),
   INDEX idx_ac_expiry       (expiry_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Re-enable relationship checking safety nets
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- Visual verification summary
+SHOW TABLES;
